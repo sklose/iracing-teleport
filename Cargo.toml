@@ -1,0 +1,11 @@
+[package]
+name = "iracing-teleport"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+lz4 = "1.24.0"
+clap = { version = "4.5", features = ["derive"] }
+
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"
