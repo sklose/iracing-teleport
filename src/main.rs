@@ -1,10 +1,10 @@
 use clap::{Parser, Subcommand};
-use lz4::block::{compress, decompress};
+use lz4::block::{compress_to_buffer, decompress_to_buffer};
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
-use std::{thread, time::Duration};
+use std::time::{Duration, Instant};
 use windows::{
-    Win32::Foundation::*, Win32::System::Memory::*, core::*,
+    Win32::Foundation::*, Win32::System::Memory::*, Win32::System::Threading::*, core::*,
 };
 
 /// UDP LZ4 Source/Target application with unicast and multicast support
@@ -56,7 +56,7 @@ fn run_source(bind: &str, target: &str, multicast: bool) -> windows::core::Resul
         }
 
         // Open memory-mapped file
-        let h_map = OpenFileMappingW(FILE_MAP_READ.0, FALSE, w!("Local\\IRSDKMemMapFileName"))?;
+        let h_map = OpenFileMappingW(FILE_MAP_READ.0, false, w!("Local\\IRSDKMemMapFileName"))?;
         let view = MapViewOfFile(h_map, FILE_MAP_READ, 0, 0, 0).Value as *const u8;
         if view.is_null() {
             panic!("Failed to map view of file");
@@ -76,21 +76,45 @@ fn run_source(bind: &str, target: &str, multicast: bool) -> windows::core::Resul
         let size = mem_info.RegionSize;
         println!("Memory region size: {} bytes", size);
 
-        let tick_rate = Duration::from_millis(1000 / 60); // 60Hz
+        // Connect to event
+        let h_event = OpenEventW(
+            SYNCHRONIZATION_ACCESS_RIGHTS(0x00100000), //SYNCHRONIZE,
+            false,
+            w!("Local\\IRSDKDataValidEvent"),
+        )?;
+        if h_event.is_invalid() {
+            panic!("Failed to create event: {:?}", GetLastError());
+        }
+
         let data_slice = std::slice::from_raw_parts(view, size);
+        let mut buf = [0u8; 64 * 1024];
+
+        let mut start_time = std::time::Instant::now();
+        let mut updates = 0;
 
         loop {
-            // Compress the memory content
-            let compressed = compress(data_slice, None, true).expect("LZ4 compression failed");
-            println!("Compressed size: {}", compressed.len());
-
-            if multicast {
-                socket.send_to(&compressed, target).unwrap();
-            } else {
-                socket.send(&compressed).unwrap();
+            if WaitForSingleObject(h_event, 200) != windows::Win32::Foundation::WAIT_EVENT(0) {
+                continue; // Timeout or error
             }
 
-            thread::sleep(tick_rate);
+            // Compress the memory content
+            let len = compress_to_buffer(data_slice, None, true, &mut buf)
+                .expect("LZ4 compression failed");
+
+            if multicast {
+                socket.send_to(&buf[..len], target).unwrap();
+            } else {
+                socket.send(&buf[..len]).unwrap();
+            }
+
+            updates += 1;
+
+            if start_time.elapsed() >= Duration::from_secs(30) {
+                let rate = updates as f64 / 30.0;
+                println!("[source] {:.2} updates/sec", rate);
+                updates = 0;
+                start_time = Instant::now();
+            }
         }
 
         // NOTE: unreachable due to loop, but you'd unmap here:
@@ -124,12 +148,69 @@ fn run_target(bind: &str, multicast: bool, group: Option<String>) -> io::Result<
         println!("Joined multicast group: {}", group_ip);
     }
 
-    let mut buf = [0; 64*1024];
+    let mut rcv_buf = [0u8; 64 * 1024];
 
-    loop {
-        let (amt, src) = socket.recv_from(&mut buf)?;
-        let decompressed = decompress(&buf[..amt], None).expect("Decompression failed");
-        println!("Received from {}: {}", src, decompressed.len());
+    unsafe {
+        // Allocate a backing file mapping for shared memory
+        let mapping_size = 32 * 1024 * 1024; // 32 MB (adjust as needed)
+        let h_map = CreateFileMappingW(
+            INVALID_HANDLE_VALUE,
+            None,
+            PAGE_READWRITE,
+            0,
+            mapping_size,
+            w!("Local\\IRSDKMemMapFileName"),
+        )?;
+
+        if h_map.is_invalid() {
+            panic!("Failed to create file mapping: {:?}", GetLastError());
+        }
+
+        let view = MapViewOfFile(h_map, FILE_MAP_WRITE, 0, 0, mapping_size as usize);
+        if view.Value.is_null() {
+            panic!("Failed to map view of file: {:?}", GetLastError());
+        }
+
+        let data_slice =
+            std::slice::from_raw_parts_mut(view.Value as *mut u8, mapping_size as usize);
+
+        // Create auto-reset event
+        let h_event = CreateEventW(
+            None,
+            false, // auto reset
+            false, // initial state: not signaled
+            w!("Local\\IRSDKDataValidEvent"),
+        )?;
+        if h_event.is_invalid() {
+            panic!("Failed to create event: {:?}", GetLastError());
+        }
+
+        println!("Memory-mapped file and data-valid event created.");
+
+        let mut start_time = std::time::Instant::now();
+        let mut updates = 0;
+
+        loop {
+            let (amt, _) = socket.recv_from(&mut rcv_buf)?;
+            decompress_to_buffer(&rcv_buf[0..amt], None, data_slice)
+                .expect("LZ4 decompression failed");
+
+            SetEvent(h_event)?;
+
+            updates += 1;
+
+            if start_time.elapsed() >= Duration::from_secs(30) {
+                let rate = updates as f64 / 30.0;
+                println!("[target] {:.2} updates/sec", rate);
+                updates = 0;
+                start_time = Instant::now();
+            }
+        }
+
+        // Unreachable, but good practice:
+        // UnmapViewOfFile(view);
+        // CloseHandle(h_map);
+        // CloseHandle(h_event);
     }
 }
 
