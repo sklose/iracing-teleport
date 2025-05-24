@@ -2,6 +2,10 @@ use clap::{Parser, Subcommand};
 use lz4::block::{compress_to_buffer, decompress_to_buffer};
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::{Duration, Instant};
 use windows::{
     Win32::Foundation::*, Win32::System::Memory::*, Win32::System::Threading::*, core::*,
@@ -48,7 +52,12 @@ enum Mode {
     },
 }
 
-fn run_source(bind: &str, target: &str, multicast: bool) -> windows::core::Result<()> {
+fn run_source(
+    bind: &str,
+    target: &str,
+    multicast: bool,
+    running: Arc<AtomicBool>,
+) -> windows::core::Result<()> {
     unsafe {
         let socket = UdpSocket::bind(bind).expect("Failed to bind UDP socket");
         if !multicast {
@@ -57,7 +66,8 @@ fn run_source(bind: &str, target: &str, multicast: bool) -> windows::core::Resul
 
         // Open memory-mapped file
         let h_map = OpenFileMappingW(FILE_MAP_READ.0, false, w!("Local\\IRSDKMemMapFileName"))?;
-        let view = MapViewOfFile(h_map, FILE_MAP_READ, 0, 0, 0).Value as *const u8;
+        let h_view = MapViewOfFile(h_map, FILE_MAP_READ, 0, 0, 0);
+        let view = h_view.Value as *const u8;
         if view.is_null() {
             panic!("Failed to map view of file");
         }
@@ -92,7 +102,7 @@ fn run_source(bind: &str, target: &str, multicast: bool) -> windows::core::Resul
         let mut start_time = std::time::Instant::now();
         let mut updates = 0;
 
-        loop {
+        while running.load(Ordering::SeqCst) {
             if WaitForSingleObject(h_event, 200) != windows::Win32::Foundation::WAIT_EVENT(0) {
                 continue; // Timeout or error
             }
@@ -117,13 +127,19 @@ fn run_source(bind: &str, target: &str, multicast: bool) -> windows::core::Resul
             }
         }
 
-        // NOTE: unreachable due to loop, but you'd unmap here:
-        // UnmapViewOfFile(view as _);
-        // CloseHandle(h_map);
+        UnmapViewOfFile(h_view)?;
+        CloseHandle(h_map)?;
+        CloseHandle(h_event)?;
+        Ok(())
     }
 }
 
-fn run_target(bind: &str, multicast: bool, group: Option<String>) -> io::Result<()> {
+fn run_target(
+    bind: &str,
+    multicast: bool,
+    group: Option<String>,
+    running: Arc<AtomicBool>,
+) -> io::Result<()> {
     let socket = UdpSocket::bind(bind)?;
     println!("Target bound to {}", bind);
 
@@ -190,7 +206,7 @@ fn run_target(bind: &str, multicast: bool, group: Option<String>) -> io::Result<
         let mut start_time = std::time::Instant::now();
         let mut updates = 0;
 
-        loop {
+        while running.load(Ordering::SeqCst) {
             let (amt, _) = socket.recv_from(&mut rcv_buf)?;
             decompress_to_buffer(&rcv_buf[0..amt], None, data_slice)
                 .expect("LZ4 decompression failed");
@@ -208,21 +224,30 @@ fn run_target(bind: &str, multicast: bool, group: Option<String>) -> io::Result<
         }
 
         // Unreachable, but good practice:
-        // UnmapViewOfFile(view);
-        // CloseHandle(h_map);
-        // CloseHandle(h_event);
+        UnmapViewOfFile(view)?;
+        CloseHandle(h_map)?;
+        CloseHandle(h_event)?;
+        Ok(())
     }
 }
 
 fn main() -> io::Result<()> {
     let cli = Cli::parse();
 
+    let running: Arc<AtomicBool> = Arc::new(AtomicBool::new(true));
+    let r = running.clone();
+    ctrlc::set_handler(move || {
+        println!("Received Ctrl+C, shutting down...");
+        r.store(false, Ordering::SeqCst);
+    })
+    .expect("Error setting Ctrl+C handler");
+
     match cli.mode {
         Mode::Source {
             bind,
             target,
             multicast,
-        } => run_source(&bind, &target, multicast).map_err(|e| {
+        } => run_source(&bind, &target, multicast, running).map_err(|e| {
             eprintln!("Error in source: {}", e);
             io::Error::other("Source error")
         }),
@@ -231,6 +256,6 @@ fn main() -> io::Result<()> {
             bind,
             group,
             multicast,
-        } => run_target(&bind, multicast, group),
+        } => run_target(&bind, multicast, group, running),
     }
 }
