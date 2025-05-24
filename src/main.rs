@@ -3,6 +3,9 @@ use lz4::block::{compress, decompress};
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 use std::{thread, time::Duration};
+use windows::{
+    Win32::Foundation::*, Win32::System::Memory::*, core::*,
+};
 
 /// UDP LZ4 Source/Target application with unicast and multicast support
 #[derive(Parser)]
@@ -45,28 +48,54 @@ enum Mode {
     },
 }
 
-fn run_source(bind: &str, target: &str, multicast: bool) -> io::Result<()> {
-    let socket = UdpSocket::bind(bind)?;
-    if multicast {
-        println!("Source in MULTICAST mode -> {}", target);
-    } else {
-        println!("Source in UNICAST mode -> {}", target);
-        socket.connect(target)?;
-    }
-
-    let tick_rate = Duration::from_millis(1000 / 60); // 60Hz
-
-    loop {
-        let msg = format!("Data from source at {:?}", std::time::Instant::now());
-        let compressed = compress(msg.as_bytes(), None, true).expect("Compression failed");
-
-        if multicast {
-            socket.send_to(&compressed, target)?;
-        } else {
-            socket.send(&compressed)?;
+fn run_source(bind: &str, target: &str, multicast: bool) -> windows::core::Result<()> {
+    unsafe {
+        let socket = UdpSocket::bind(bind).expect("Failed to bind UDP socket");
+        if !multicast {
+            socket.connect(target).expect("Failed to connect to target");
         }
 
-        thread::sleep(tick_rate);
+        // Open memory-mapped file
+        let h_map = OpenFileMappingW(FILE_MAP_READ.0, FALSE, w!("Local\\IRSDKMemMapFileName"))?;
+        let view = MapViewOfFile(h_map, FILE_MAP_READ, 0, 0, 0).Value as *const u8;
+        if view.is_null() {
+            panic!("Failed to map view of file");
+        }
+
+        // Use VirtualQuery to determine the size of the region
+        let mut mem_info = MEMORY_BASIC_INFORMATION::default();
+        let result = VirtualQuery(
+            Some(view as *const _),
+            &mut mem_info,
+            std::mem::size_of::<MEMORY_BASIC_INFORMATION>(),
+        );
+        if result == 0 {
+            panic!("VirtualQuery failed");
+        }
+
+        let size = mem_info.RegionSize;
+        println!("Memory region size: {} bytes", size);
+
+        let tick_rate = Duration::from_millis(1000 / 60); // 60Hz
+        let data_slice = std::slice::from_raw_parts(view, size);
+
+        loop {
+            // Compress the memory content
+            let compressed = compress(data_slice, None, true).expect("LZ4 compression failed");
+            println!("Compressed size: {}", compressed.len());
+
+            if multicast {
+                socket.send_to(&compressed, target).unwrap();
+            } else {
+                socket.send(&compressed).unwrap();
+            }
+
+            thread::sleep(tick_rate);
+        }
+
+        // NOTE: unreachable due to loop, but you'd unmap here:
+        // UnmapViewOfFile(view as _);
+        // CloseHandle(h_map);
     }
 }
 
@@ -95,13 +124,12 @@ fn run_target(bind: &str, multicast: bool, group: Option<String>) -> io::Result<
         println!("Joined multicast group: {}", group_ip);
     }
 
-    let mut buf = [0; 2048];
+    let mut buf = [0; 64*1024];
 
     loop {
         let (amt, src) = socket.recv_from(&mut buf)?;
         let decompressed = decompress(&buf[..amt], None).expect("Decompression failed");
-        let msg = String::from_utf8_lossy(&decompressed);
-        println!("Received from {}: {}", src, msg);
+        println!("Received from {}: {}", src, decompressed.len());
     }
 }
 
@@ -113,7 +141,10 @@ fn main() -> io::Result<()> {
             bind,
             target,
             multicast,
-        } => run_source(&bind, &target, multicast),
+        } => run_source(&bind, &target, multicast).map_err(|e| {
+            eprintln!("Error in source: {}", e);
+            io::Error::other("Source error")
+        }),
 
         Mode::Target {
             bind,
