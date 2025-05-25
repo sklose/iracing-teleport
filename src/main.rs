@@ -1,9 +1,6 @@
 use clap::{Parser, Subcommand};
 use std::io;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::mpsc;
 
 mod source;
 mod target;
@@ -53,11 +50,11 @@ enum Mode {
 fn main() -> io::Result<()> {
     let cli = Cli::parse();
 
-    let running: Arc<AtomicBool> = Arc::new(AtomicBool::new(true));
-    let r = running.clone();
+    let (shutdown_tx, shutdown_rx) = mpsc::channel();
+
     ctrlc::set_handler(move || {
         println!("Received Ctrl+C, shutting down...");
-        r.store(false, Ordering::SeqCst);
+        let _ = shutdown_tx.send(());
     })
     .expect("Error setting Ctrl+C handler");
 
@@ -66,7 +63,7 @@ fn main() -> io::Result<()> {
             bind,
             target,
             unicast,
-        } => source::run(&bind, &target, unicast, running).map_err(|e| {
+        } => source::run(&bind, &target, unicast, shutdown_rx).map_err(|e| {
             eprintln!("Error in source: {}", e);
             io::Error::other("Source error")
         }),
@@ -75,6 +72,6 @@ fn main() -> io::Result<()> {
             bind,
             group,
             unicast,
-        } => target::run(&bind, unicast, group, running),
+        } => target::run(&bind, unicast, group, shutdown_rx),
     }
 }

@@ -1,11 +1,8 @@
 use lz4::block::compress_to_buffer;
 use std::net::UdpSocket;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::mpsc::{self, Receiver};
 use std::{
-    io, thread,
+    io,
     time::{Duration, Instant},
 };
 
@@ -18,15 +15,25 @@ fn connect_telemetry() -> io::Result<Option<Telemetry>> {
             println!("Memory region size: {} bytes", telemetry.size());
             Ok(Some(telemetry))
         }
-        Err(TelemetryError::Unavailable) => {
-            thread::sleep(Duration::from_secs(1));
-            Ok(None)
-        }
+        Err(TelemetryError::Unavailable) => Ok(None),
         Err(TelemetryError::Other(e)) => Err(io::Error::other(e.to_string())),
     }
 }
 
-pub fn run(bind: &str, target: &str, unicast: bool, running: Arc<AtomicBool>) -> io::Result<()> {
+fn try_connect_telemetry(shutdown: &Receiver<()>) -> io::Result<Option<Telemetry>> {
+    let result = connect_telemetry()?;
+    if result.is_none() {
+        // Wait for either a shutdown signal or timeout
+        match shutdown.recv_timeout(Duration::from_secs(10)) {
+            Ok(_) => return Ok(None),                   // Shutdown requested
+            Err(mpsc::RecvTimeoutError::Timeout) => (), // Continue trying
+            Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(None), // Shutdown
+        }
+    }
+    Ok(result)
+}
+
+pub fn run(bind: &str, target: &str, unicast: bool, shutdown: Receiver<()>) -> io::Result<()> {
     let socket = UdpSocket::bind(bind).expect("Failed to bind UDP socket");
     if unicast {
         socket
@@ -37,12 +44,14 @@ pub fn run(bind: &str, target: &str, unicast: bool, running: Arc<AtomicBool>) ->
     // Keep trying to open telemetry until successful or interrupted
     println!("Waiting for racing session to start...");
     let mut telemetry = loop {
-        if !running.load(Ordering::SeqCst) {
-            return Ok(());
-        }
-
-        if let Some(telemetry) = connect_telemetry()? {
-            break telemetry;
+        match try_connect_telemetry(&shutdown)? {
+            Some(telemetry) => break telemetry,
+            None => {
+                // Check if we were asked to shut down
+                if shutdown.try_recv().is_ok() {
+                    return Ok(());
+                }
+            }
         }
     };
 
@@ -50,7 +59,12 @@ pub fn run(bind: &str, target: &str, unicast: bool, running: Arc<AtomicBool>) ->
     let mut start_time = Instant::now();
     let mut updates = 0;
 
-    while running.load(Ordering::SeqCst) {
+    loop {
+        // Check for shutdown signal
+        if shutdown.try_recv().is_ok() {
+            return Ok(());
+        }
+
         if !telemetry.wait_for_data(200) {
             println!("Lost connection, attempting to reconnect...");
             // Drop the current telemetry instance
@@ -58,14 +72,17 @@ pub fn run(bind: &str, target: &str, unicast: bool, running: Arc<AtomicBool>) ->
 
             // Try to establish a new connection
             loop {
-                if !running.load(Ordering::SeqCst) {
-                    return Ok(());
-                }
-
-                if let Some(new_telemetry) = connect_telemetry()? {
-                    telemetry = new_telemetry;
-                    println!("Successfully reconnected to racing session");
-                    break;
+                match try_connect_telemetry(&shutdown)? {
+                    Some(new_telemetry) => {
+                        telemetry = new_telemetry;
+                        println!("Successfully reconnected to racing session");
+                        break;
+                    }
+                    None => {
+                        if shutdown.try_recv().is_ok() {
+                            return Ok(());
+                        }
+                    }
                 }
             }
             continue;
@@ -90,6 +107,4 @@ pub fn run(bind: &str, target: &str, unicast: bool, running: Arc<AtomicBool>) ->
             start_time = Instant::now();
         }
     }
-
-    Ok(())
 }

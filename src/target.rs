@@ -1,9 +1,6 @@
 use lz4::block::decompress_to_buffer;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::mpsc::Receiver;
 use std::{
     io,
     time::{Duration, Instant},
@@ -21,7 +18,7 @@ fn create_telemetry() -> io::Result<Telemetry> {
     Ok(telemetry)
 }
 
-pub fn run(bind: &str, unicast: bool, group: String, running: Arc<AtomicBool>) -> io::Result<()> {
+pub fn run(bind: &str, unicast: bool, group: String, shutdown: Receiver<()>) -> io::Result<()> {
     let socket = UdpSocket::bind(bind)?;
     println!("Target bound to {}", bind);
 
@@ -52,7 +49,12 @@ pub fn run(bind: &str, unicast: bool, group: String, running: Arc<AtomicBool>) -
     // Set a short timeout on UDP receive to check for telemetry timeout
     socket.set_read_timeout(Some(Duration::from_secs(1)))?;
 
-    while running.load(Ordering::SeqCst) {
+    loop {
+        // Check for shutdown signal
+        if shutdown.try_recv().is_ok() {
+            return Ok(());
+        }
+
         match socket.recv_from(&mut rcv_buf) {
             Ok((amt, _)) => {
                 // Create telemetry if it doesn't exist
@@ -94,6 +96,4 @@ pub fn run(bind: &str, unicast: bool, group: String, running: Arc<AtomicBool>) -
             Err(e) => return Err(e),
         }
     }
-
-    Ok(())
 }
