@@ -1,6 +1,6 @@
 TARGET = x86_64-pc-windows-gnu
 RELEASE_DIR = target/$(TARGET)/release
-BIN_NAME = iracing_teleport
+BIN_NAME = iracing-teleport
 
 # Default: cross-compile for Windows
 all: build

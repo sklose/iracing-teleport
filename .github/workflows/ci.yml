@@ -61,7 +61,7 @@ jobs:
       - name: Create release asset
         run: |
           cd target/x86_64-pc-windows-gnu/release
-          zip iracing-teleport.zip iracing_teleport.exe
+          zip iracing-teleport.zip iracing-teleport.exe
       
       - name: Upload release asset
         uses: softprops/action-gh-release@v1
