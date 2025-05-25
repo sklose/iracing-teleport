@@ -33,6 +33,16 @@ fn try_connect_telemetry(shutdown: &Receiver<()>) -> io::Result<Option<Telemetry
     Ok(result)
 }
 
+fn try_compress_data(data: &[u8], buf: &mut [u8]) -> Option<usize> {
+    match compress_to_buffer(data, None, true, buf) {
+        Ok(len) => Some(len),
+        Err(e) => {
+            eprintln!("LZ4 compression failed: {}. Skipping this update.", e);
+            None
+        }
+    }
+}
+
 pub fn run(bind: &str, target: &str, unicast: bool, shutdown: Receiver<()>) -> io::Result<()> {
     let socket = UdpSocket::bind(bind)
         .map_err(|e| io::Error::new(e.kind(), format!("Failed to bind UDP socket: {}", e)))?;
@@ -94,18 +104,22 @@ pub fn run(bind: &str, target: &str, unicast: bool, shutdown: Receiver<()>) -> i
         }
 
         // Compress the memory content
-        let len = compress_to_buffer(telemetry.as_slice(), None, true, &mut buf)
-            .map_err(|e| io::Error::other(format!("LZ4 compression failed: {}", e)))?;
+        let Some(len) = try_compress_data(telemetry.as_slice(), &mut buf) else {
+            continue;
+        };
 
-        if !unicast {
+        // Send the compressed data
+        let send_result = if !unicast {
             socket
                 .send_to(&buf[..len], target)
-                .map_err(|e| io::Error::new(e.kind(), format!("Failed to send data: {}", e)))?;
+                .map_err(|e| io::Error::new(e.kind(), format!("Failed to send data: {}", e)))
         } else {
             socket
                 .send(&buf[..len])
-                .map_err(|e| io::Error::new(e.kind(), format!("Failed to send data: {}", e)))?;
-        }
+                .map_err(|e| io::Error::new(e.kind(), format!("Failed to send data: {}", e)))
+        };
+
+        send_result?;
 
         updates += 1;
 

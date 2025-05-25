@@ -39,6 +39,16 @@ fn setup_multicast(socket: &UdpSocket, bind: &str, group: &str) -> io::Result<()
     Ok(())
 }
 
+fn try_decompress_data(compressed: &[u8], target: &mut [u8]) -> bool {
+    match decompress_to_buffer(compressed, None, target) {
+        Ok(_) => true,
+        Err(e) => {
+            eprintln!("LZ4 decompression failed: {}. Skipping this update.", e);
+            false
+        }
+    }
+}
+
 pub fn run(bind: &str, unicast: bool, group: String, shutdown: Receiver<()>) -> io::Result<()> {
     let socket = UdpSocket::bind(bind)
         .map_err(|e| io::Error::new(e.kind(), format!("Failed to bind to {}: {}", bind, e)))?;
@@ -74,8 +84,11 @@ pub fn run(bind: &str, unicast: bool, group: String, shutdown: Receiver<()>) -> 
 
                 // Process the received data
                 let telemetry = telemetry.as_mut().unwrap();
-                decompress_to_buffer(&rcv_buf[0..amt], None, telemetry.as_slice_mut())
-                    .map_err(|e| io::Error::other(format!("LZ4 decompression failed: {}", e)))?;
+
+                if !try_decompress_data(&rcv_buf[0..amt], telemetry.as_slice_mut()) {
+                    eprintln!("LZ4 decompression failed. Skipping this update.");
+                    continue;
+                }
 
                 telemetry
                     .signal_data_ready()
