@@ -4,9 +4,22 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
-use std::{io, time::Instant};
+use std::{
+    io,
+    time::{Duration, Instant},
+};
 
 use crate::telemetry::Telemetry;
+
+const TELEMETRY_TIMEOUT: Duration = Duration::from_secs(10);
+const MAPPING_SIZE: usize = 32 * 1024 * 1024; // 32 MB
+
+fn create_telemetry() -> io::Result<Telemetry> {
+    let telemetry = Telemetry::create(MAPPING_SIZE)
+        .map_err(|e| io::Error::other(format!("Failed to create telemetry: {}", e)))?;
+    println!("Memory-mapped file and data-valid event created.");
+    Ok(telemetry)
+}
 
 pub fn run(bind: &str, unicast: bool, group: String, running: Arc<AtomicBool>) -> io::Result<()> {
     let socket = UdpSocket::bind(bind)?;
@@ -31,33 +44,54 @@ pub fn run(bind: &str, unicast: bool, group: String, running: Arc<AtomicBool>) -
     }
 
     let mut rcv_buf = [0u8; 64 * 1024];
-
-    // Create telemetry mapping
-    let mapping_size = 32 * 1024 * 1024; // 32 MB
-    let mut telemetry = Telemetry::create(mapping_size)
-        .map_err(|e| io::Error::other(format!("Failed to create telemetry: {}", e)))?;
-
-    println!("Memory-mapped file and data-valid event created.");
-
+    let mut telemetry: Option<Telemetry> = None;
+    let mut last_update = Instant::now();
     let mut start_time = Instant::now();
     let mut updates = 0;
 
+    // Set a short timeout on UDP receive to check for telemetry timeout
+    socket.set_read_timeout(Some(Duration::from_secs(1)))?;
+
     while running.load(Ordering::SeqCst) {
-        let (amt, _) = socket.recv_from(&mut rcv_buf)?;
-        decompress_to_buffer(&rcv_buf[0..amt], None, telemetry.as_slice_mut())
-            .expect("LZ4 decompression failed");
+        match socket.recv_from(&mut rcv_buf) {
+            Ok((amt, _)) => {
+                // Create telemetry if it doesn't exist
+                if telemetry.is_none() {
+                    telemetry = Some(create_telemetry()?);
+                }
 
-        telemetry
-            .signal_data_ready()
-            .map_err(|e| io::Error::other(format!("Failed to signal data ready: {}", e)))?;
+                // Process the received data
+                let telemetry = telemetry.as_mut().unwrap();
+                decompress_to_buffer(&rcv_buf[0..amt], None, telemetry.as_slice_mut())
+                    .expect("LZ4 decompression failed");
 
-        updates += 1;
+                telemetry
+                    .signal_data_ready()
+                    .map_err(|e| io::Error::other(format!("Failed to signal data ready: {}", e)))?;
 
-        if start_time.elapsed() >= std::time::Duration::from_secs(30) {
-            let rate = updates as f64 / 30.0;
-            println!("[target] {:.2} updates/sec", rate);
-            updates = 0;
-            start_time = Instant::now();
+                last_update = Instant::now();
+                updates += 1;
+
+                if start_time.elapsed() >= Duration::from_secs(30) {
+                    let rate = updates as f64 / 30.0;
+                    println!("[target] {:.2} updates/sec", rate);
+                    updates = 0;
+                    start_time = Instant::now();
+                }
+            }
+            Err(e)
+                if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut =>
+            {
+                // Check if we should close telemetry due to timeout
+                if telemetry.is_some() && last_update.elapsed() >= TELEMETRY_TIMEOUT {
+                    println!(
+                        "No updates received for {} seconds, closing telemetry",
+                        TELEMETRY_TIMEOUT.as_secs()
+                    );
+                    telemetry = None;
+                }
+            }
+            Err(e) => return Err(e),
         }
     }
 
