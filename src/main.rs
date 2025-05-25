@@ -63,15 +63,16 @@ fn main() -> io::Result<()> {
             bind,
             target,
             unicast,
-        } => source::run(&bind, &target, unicast, shutdown_rx).map_err(|e| {
+        } => source::run(&bind, &target, unicast, shutdown_rx).inspect_err(|e| {
             eprintln!("Error in source: {}", e);
-            io::Error::other("Source error")
         }),
 
         Mode::Target {
             bind,
             group,
             unicast,
-        } => target::run(&bind, unicast, group, shutdown_rx),
+        } => target::run(&bind, unicast, group, shutdown_rx).inspect_err(|e| {
+            eprintln!("Error in target: {}", e);
+        }),
     }
 }
