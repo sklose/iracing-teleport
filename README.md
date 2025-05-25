@@ -4,6 +4,10 @@ A tool that allows you to access iRacing's telemetry data on a remote computer. 
 
 ![screenshot](media/screenshot.png)
 
+## Download
+
+⬇️ [Download Latest Release](https://github.com/sklose/iracing-teleport/releases/latest/download/iracing-teleport.zip)
+
 ## How It Works
 
 The tool consists of two components:
