@@ -8,6 +8,11 @@ use std::{
 
 use crate::telemetry::{Telemetry, TelemetryError};
 
+// Timeout before considering the connection lost
+const DISCONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+// Individual wait interval to maintain shutdown responsiveness
+const WAIT_INTERVAL_MS: u32 = 200;
+
 fn connect_telemetry() -> io::Result<Option<Telemetry>> {
     match Telemetry::open() {
         Ok(telemetry) => {
@@ -73,6 +78,7 @@ pub fn run(bind: &str, target: &str, unicast: bool, shutdown: Receiver<()>) -> i
     let mut buf = [0u8; 64 * 1024];
     let mut start_time = Instant::now();
     let mut updates = 0;
+    let mut last_data_time = Instant::now();
 
     loop {
         // Check for shutdown signal
@@ -80,28 +86,37 @@ pub fn run(bind: &str, target: &str, unicast: bool, shutdown: Receiver<()>) -> i
             return Ok(());
         }
 
-        if !telemetry.wait_for_data(200) {
-            println!("Lost connection, attempting to reconnect...");
-            // Drop the current telemetry instance
-            drop(telemetry);
+        if !telemetry.wait_for_data(WAIT_INTERVAL_MS) {
+            // Check if we've been waiting too long
+            if last_data_time.elapsed() >= DISCONNECT_TIMEOUT {
+                println!("Lost connection, attempting to reconnect...");
+                // Drop the current telemetry instance
+                drop(telemetry);
 
-            // Try to establish a new connection
-            loop {
-                match try_connect_telemetry(&shutdown)? {
-                    Some(new_telemetry) => {
-                        telemetry = new_telemetry;
-                        println!("Successfully reconnected to racing session");
-                        break;
-                    }
-                    None => {
-                        if shutdown.try_recv().is_ok() {
-                            return Ok(());
+                // Try to establish a new connection
+                loop {
+                    match try_connect_telemetry(&shutdown)? {
+                        Some(new_telemetry) => {
+                            telemetry = new_telemetry;
+                            last_data_time = Instant::now();
+                            println!("Successfully reconnected to racing session");
+                            break;
+                        }
+                        None => {
+                            if shutdown.try_recv().is_ok() {
+                                return Ok(());
+                            }
                         }
                     }
                 }
+                continue;
             }
+            // No data yet but haven't timed out, try again
             continue;
         }
+
+        // Got data, reset the timeout
+        last_data_time = Instant::now();
 
         // Compress the memory content
         let Some(len) = try_compress_data(telemetry.as_slice(), &mut buf) else {
