@@ -1,0 +1,69 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  release:
+    types: [ "created" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Build and Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+          components: clippy, rustfmt
+      
+      - name: Install MinGW
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64
+      
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      
+      - name: Run clippy
+        run: cargo clippy --target x86_64-pc-windows-gnu --all-targets --all-features -- -D warnings
+      
+      - name: Run build
+        run: cargo build --target x86_64-pc-windows-gnu --release
+
+  release:
+    name: Build Release Asset
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+      
+      - name: Install MinGW
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64
+      
+      - name: Build release binary
+        run: cargo build --target x86_64-pc-windows-gnu --release
+      
+      - name: Create release asset
+        run: |
+          cd target/x86_64-pc-windows-gnu/release
+          zip iracing-teleport.zip iracing_teleport.exe
+      
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v1
+        with:
+          files: target/x86_64-pc-windows-gnu/release/iracing-teleport.zip 
