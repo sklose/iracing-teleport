@@ -2,6 +2,8 @@
 
 A tool that allows you to access iRacing's telemetry data on a remote computer. This is particularly useful when you want to run telemetry applications like SimHub on a different machine than your iRacing computer.
 
+![screenshot](media/screenshot.png)
+
 ## How It Works
 
 The tool consists of two components:
