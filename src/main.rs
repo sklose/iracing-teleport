@@ -1,15 +1,17 @@
 use clap::{Parser, Subcommand};
 use lz4::block::{compress_to_buffer, decompress_to_buffer};
-use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
-use std::time::{Duration, Instant};
+use std::{
+    io, thread,
+    time::{Duration, Instant},
+};
 
 mod telemetry;
-use telemetry::Telemetry;
+use telemetry::{Telemetry, TelemetryError};
 
 /// UDP LZ4 Source/Target application with unicast and multicast support
 #[derive(Parser)]
@@ -52,53 +54,65 @@ enum Mode {
     },
 }
 
-fn run_source(
-    bind: &str,
-    target: &str,
-    unicast: bool,
-    running: Arc<AtomicBool>,
-) -> windows::core::Result<()> {
-    unsafe {
-        let socket = UdpSocket::bind(bind).expect("Failed to bind UDP socket");
-        if unicast {
-            socket.connect(target).expect("Failed to connect to target");
-        }
-
-        // Open telemetry
-        let telemetry = Telemetry::open()?;
-        println!("Memory region size: {} bytes", telemetry.size());
-
-        let mut buf = [0u8; 64 * 1024];
-        let mut start_time = std::time::Instant::now();
-        let mut updates = 0;
-
-        while running.load(Ordering::SeqCst) {
-            if !telemetry.wait_for_data(200) {
-                continue; // Timeout or error
-            }
-
-            // Compress the memory content
-            let len = compress_to_buffer(telemetry.as_slice(), None, true, &mut buf)
-                .expect("LZ4 compression failed");
-
-            if !unicast {
-                socket.send_to(&buf[..len], target).unwrap();
-            } else {
-                socket.send(&buf[..len]).unwrap();
-            }
-
-            updates += 1;
-
-            if start_time.elapsed() >= Duration::from_secs(30) {
-                let rate = updates as f64 / 30.0;
-                println!("[source] {:.2} updates/sec", rate);
-                updates = 0;
-                start_time = Instant::now();
-            }
-        }
-
-        Ok(())
+fn run_source(bind: &str, target: &str, unicast: bool, running: Arc<AtomicBool>) -> io::Result<()> {
+    let socket = UdpSocket::bind(bind).expect("Failed to bind UDP socket");
+    if unicast {
+        socket.connect(target).expect("Failed to connect to target");
     }
+
+    // Keep trying to open telemetry until successful or interrupted
+    println!("Waiting for target to start...");
+    let telemetry = loop {
+        if !running.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+
+        match Telemetry::open() {
+            Ok(telemetry) => {
+                println!("Connected to target");
+                println!("Memory region size: {} bytes", telemetry.size());
+                break telemetry;
+            }
+            Err(TelemetryError::Unavailable) => {
+                thread::sleep(Duration::from_secs(1));
+                continue;
+            }
+            Err(TelemetryError::Other(e)) => {
+                return Err(io::Error::other(e.to_string()));
+            }
+        }
+    };
+
+    let mut buf = [0u8; 64 * 1024];
+    let mut start_time = std::time::Instant::now();
+    let mut updates = 0;
+
+    while running.load(Ordering::SeqCst) {
+        if !telemetry.wait_for_data(200) {
+            continue; // Timeout or error
+        }
+
+        // Compress the memory content
+        let len = compress_to_buffer(telemetry.as_slice(), None, true, &mut buf)
+            .expect("LZ4 compression failed");
+
+        if !unicast {
+            socket.send_to(&buf[..len], target).unwrap();
+        } else {
+            socket.send(&buf[..len]).unwrap();
+        }
+
+        updates += 1;
+
+        if start_time.elapsed() >= Duration::from_secs(30) {
+            let rate = updates as f64 / 30.0;
+            println!("[source] {:.2} updates/sec", rate);
+            updates = 0;
+            start_time = Instant::now();
+        }
+    }
+
+    Ok(())
 }
 
 fn run_target(
@@ -130,38 +144,36 @@ fn run_target(
 
     let mut rcv_buf = [0u8; 64 * 1024];
 
-    unsafe {
-        // Create telemetry mapping
-        let mapping_size = 32 * 1024 * 1024; // 32 MB
-        let mut telemetry = Telemetry::create(mapping_size)
-            .map_err(|e| io::Error::other(format!("Failed to create telemetry: {}", e)))?;
+    // Create telemetry mapping
+    let mapping_size = 32 * 1024 * 1024; // 32 MB
+    let mut telemetry = Telemetry::create(mapping_size)
+        .map_err(|e| io::Error::other(format!("Failed to create telemetry: {}", e)))?;
 
-        println!("Memory-mapped file and data-valid event created.");
+    println!("Memory-mapped file and data-valid event created.");
 
-        let mut start_time = std::time::Instant::now();
-        let mut updates = 0;
+    let mut start_time = std::time::Instant::now();
+    let mut updates = 0;
 
-        while running.load(Ordering::SeqCst) {
-            let (amt, _) = socket.recv_from(&mut rcv_buf)?;
-            decompress_to_buffer(&rcv_buf[0..amt], None, telemetry.as_slice_mut())
-                .expect("LZ4 decompression failed");
+    while running.load(Ordering::SeqCst) {
+        let (amt, _) = socket.recv_from(&mut rcv_buf)?;
+        decompress_to_buffer(&rcv_buf[0..amt], None, telemetry.as_slice_mut())
+            .expect("LZ4 decompression failed");
 
-            telemetry
-                .signal_data_ready()
-                .map_err(|e| io::Error::other(format!("Failed to signal data ready: {}", e)))?;
+        telemetry
+            .signal_data_ready()
+            .map_err(|e| io::Error::other(format!("Failed to signal data ready: {}", e)))?;
 
-            updates += 1;
+        updates += 1;
 
-            if start_time.elapsed() >= Duration::from_secs(30) {
-                let rate = updates as f64 / 30.0;
-                println!("[target] {:.2} updates/sec", rate);
-                updates = 0;
-                start_time = Instant::now();
-            }
+        if start_time.elapsed() >= Duration::from_secs(30) {
+            let rate = updates as f64 / 30.0;
+            println!("[target] {:.2} updates/sec", rate);
+            updates = 0;
+            start_time = Instant::now();
         }
-
-        Ok(())
     }
+
+    Ok(())
 }
 
 fn main() -> io::Result<()> {
