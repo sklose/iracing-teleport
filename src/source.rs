@@ -34,11 +34,16 @@ fn try_connect_telemetry(shutdown: &Receiver<()>) -> io::Result<Option<Telemetry
 }
 
 pub fn run(bind: &str, target: &str, unicast: bool, shutdown: Receiver<()>) -> io::Result<()> {
-    let socket = UdpSocket::bind(bind).expect("Failed to bind UDP socket");
+    let socket = UdpSocket::bind(bind)
+        .map_err(|e| io::Error::new(e.kind(), format!("Failed to bind UDP socket: {}", e)))?;
+
     if unicast {
-        socket
-            .connect(target)
-            .expect("Failed to connect to racing session");
+        socket.connect(target).map_err(|e| {
+            io::Error::new(
+                e.kind(),
+                format!("Failed to connect to racing session: {}", e),
+            )
+        })?;
     }
 
     // Keep trying to open telemetry until successful or interrupted
@@ -90,12 +95,16 @@ pub fn run(bind: &str, target: &str, unicast: bool, shutdown: Receiver<()>) -> i
 
         // Compress the memory content
         let len = compress_to_buffer(telemetry.as_slice(), None, true, &mut buf)
-            .expect("LZ4 compression failed");
+            .map_err(|e| io::Error::other(format!("LZ4 compression failed: {}", e)))?;
 
         if !unicast {
-            socket.send_to(&buf[..len], target).unwrap();
+            socket
+                .send_to(&buf[..len], target)
+                .map_err(|e| io::Error::new(e.kind(), format!("Failed to send data: {}", e)))?;
         } else {
-            socket.send(&buf[..len]).unwrap();
+            socket
+                .send(&buf[..len])
+                .map_err(|e| io::Error::new(e.kind(), format!("Failed to send data: {}", e)))?;
         }
 
         updates += 1;

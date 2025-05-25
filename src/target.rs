@@ -18,26 +18,34 @@ fn create_telemetry() -> io::Result<Telemetry> {
     Ok(telemetry)
 }
 
+fn setup_multicast(socket: &UdpSocket, bind: &str, group: &str) -> io::Result<()> {
+    let group_ip: Ipv4Addr = group
+        .parse()
+        .map_err(|e| io::Error::other(format!("Invalid multicast group IP: {}", e)))?;
+
+    let local_ip = match bind.parse::<SocketAddr>() {
+        Ok(addr) => match addr.ip() {
+            IpAddr::V4(ipv4) => ipv4,
+            _ => return Err(io::Error::other("Only IPv4 is supported for multicast")),
+        },
+        Err(_) => Ipv4Addr::UNSPECIFIED,
+    };
+
+    socket
+        .join_multicast_v4(&group_ip, &local_ip)
+        .map_err(|e| io::Error::new(e.kind(), format!("Failed to join multicast group: {}", e)))?;
+
+    println!("Joined multicast group: {}", group_ip);
+    Ok(())
+}
+
 pub fn run(bind: &str, unicast: bool, group: String, shutdown: Receiver<()>) -> io::Result<()> {
-    let socket = UdpSocket::bind(bind)?;
+    let socket = UdpSocket::bind(bind)
+        .map_err(|e| io::Error::new(e.kind(), format!("Failed to bind to {}: {}", bind, e)))?;
     println!("Target bound to {}", bind);
 
     if !unicast {
-        let group_ip: Ipv4Addr = group.parse().expect("Invalid multicast group IP");
-
-        let local_ip = match bind.parse::<SocketAddr>() {
-            Ok(addr) => match addr.ip() {
-                IpAddr::V4(ipv4) => ipv4,
-                _ => panic!("Only IPv4 is supported for multicast"),
-            },
-            Err(_) => Ipv4Addr::UNSPECIFIED,
-        };
-
-        socket
-            .join_multicast_v4(&group_ip, &local_ip)
-            .expect("Failed to join multicast group");
-
-        println!("Joined multicast group: {}", group_ip);
+        setup_multicast(&socket, bind, &group)?;
     }
 
     let mut rcv_buf = [0u8; 64 * 1024];
@@ -47,7 +55,9 @@ pub fn run(bind: &str, unicast: bool, group: String, shutdown: Receiver<()>) -> 
     let mut updates = 0;
 
     // Set a short timeout on UDP receive to check for telemetry timeout
-    socket.set_read_timeout(Some(Duration::from_secs(1)))?;
+    socket
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .map_err(|e| io::Error::new(e.kind(), format!("Failed to set socket timeout: {}", e)))?;
 
     loop {
         // Check for shutdown signal
@@ -65,7 +75,7 @@ pub fn run(bind: &str, unicast: bool, group: String, shutdown: Receiver<()>) -> 
                 // Process the received data
                 let telemetry = telemetry.as_mut().unwrap();
                 decompress_to_buffer(&rcv_buf[0..amt], None, telemetry.as_slice_mut())
-                    .expect("LZ4 decompression failed");
+                    .map_err(|e| io::Error::other(format!("LZ4 decompression failed: {}", e)))?;
 
                 telemetry
                     .signal_data_ready()
@@ -93,7 +103,12 @@ pub fn run(bind: &str, unicast: bool, group: String, shutdown: Receiver<()>) -> 
                     telemetry = None;
                 }
             }
-            Err(e) => return Err(e),
+            Err(e) => {
+                return Err(io::Error::new(
+                    e.kind(),
+                    format!("UDP receive error: {}", e),
+                ));
+            }
         }
     }
 }
