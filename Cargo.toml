@@ -1,5 +1,9 @@
 [package]
 name = "iracing-teleport"
+authors = ["Sebastian Klose <mail@sklose.com>"]
+description = "A tool to send and receive telemetry data from iRacing"
+license = "MIT"
+repository = "https://github.com/sklose/iracing-teleport"
 version = "0.1.0"
 edition = "2024"
 
