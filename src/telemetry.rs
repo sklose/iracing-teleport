@@ -39,7 +39,7 @@ impl Telemetry {
         unsafe {
             // Try to open the event
             let h_event = match OpenEventW(
-                SYNCHRONIZATION_ACCESS_RIGHTS(0x00100000), //SYNCHRONIZE
+                SYNCHRONIZATION_SYNCHRONIZE,
                 false,
                 w!("Local\\IRSDKDataValidEvent"),
             ) {

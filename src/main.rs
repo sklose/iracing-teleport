@@ -6,9 +6,14 @@ mod source;
 mod target;
 mod telemetry;
 
-/// UDP LZ4 Source/Target application with unicast and multicast support
 #[derive(Parser)]
-#[command(name = "UDP LZ4 Source/Target", version, about)]
+#[command(
+    name = "iracing-teleport",
+    version = env!("CARGO_PKG_VERSION"),
+    author = env!("CARGO_PKG_AUTHORS"),
+    about = env!("CARGO_PKG_DESCRIPTION"),
+    after_help = "Visit https://github.com/sklose/iracing-teleport for more information."
+)]
 struct Cli {
     #[command(subcommand)]
     mode: Mode,

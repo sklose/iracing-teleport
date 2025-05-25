@@ -13,8 +13,8 @@ const DISCONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 // Individual wait interval to maintain shutdown responsiveness
 const WAIT_INTERVAL_MS: u32 = 200;
 
-fn connect_telemetry() -> io::Result<Option<Telemetry>> {
-    match Telemetry::open() {
+fn try_connect_telemetry(shutdown: &Receiver<()>) -> io::Result<Option<Telemetry>> {
+    let result = match Telemetry::open() {
         Ok(telemetry) => {
             println!("Connected to racing session");
             println!("Memory region size: {} bytes", telemetry.size());
@@ -22,11 +22,8 @@ fn connect_telemetry() -> io::Result<Option<Telemetry>> {
         }
         Err(TelemetryError::Unavailable) => Ok(None),
         Err(TelemetryError::Other(e)) => Err(io::Error::other(e.to_string())),
-    }
-}
+    }?;
 
-fn try_connect_telemetry(shutdown: &Receiver<()>) -> io::Result<Option<Telemetry>> {
-    let result = connect_telemetry()?;
     if result.is_none() {
         // Wait for either a shutdown signal or timeout
         match shutdown.recv_timeout(Duration::from_secs(10)) {
