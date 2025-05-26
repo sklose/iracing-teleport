@@ -2,12 +2,15 @@ use super::{TelemetryError, TelemetryProvider};
 use crate::protocol::MAX_PAYLOAD_SIZE;
 use rand::{Rng, rng};
 use std::cell::UnsafeCell;
+use std::time::{Duration, Instant};
 
 // Telemetry can be larger than a single datagram since the protocol handles fragmentation
 const MOCK_TELEMETRY_SIZE: usize = MAX_PAYLOAD_SIZE * 4; // Example: 4 fragments worth of data
+const FRAME_TIME: Duration = Duration::from_nanos(16_666_667); // 1/60th of a second
 
 pub struct MockTelemetry {
     buffer: UnsafeCell<Vec<u8>>,
+    last_update: Option<Instant>,
 }
 
 // Safe to share between threads since we handle synchronization
@@ -20,13 +23,6 @@ impl MockTelemetry {
         rng.fill(&mut buffer[..]);
         buffer
     }
-
-    fn update_data(&mut self) {
-        // Update the buffer with new random data
-        let buffer = self.buffer.get_mut();
-        let mut rng = rng();
-        rng.fill(buffer.as_mut_slice());
-    }
 }
 
 impl TelemetryProvider for MockTelemetry {
@@ -34,6 +30,7 @@ impl TelemetryProvider for MockTelemetry {
         // When opening as source, create random test data that spans multiple datagrams
         Ok(Self {
             buffer: UnsafeCell::new(Self::generate_test_data(MOCK_TELEMETRY_SIZE)),
+            last_update: None,
         })
     }
 
@@ -41,18 +38,22 @@ impl TelemetryProvider for MockTelemetry {
         // Target just allocates empty buffer of requested size
         Ok(Self {
             buffer: UnsafeCell::new(vec![0; size]),
+            last_update: None,
         })
     }
 
-    fn wait_for_data(&mut self, _timeout_ms: u32) -> bool {
-        // For testing, always generate new data and return true
-        self.update_data();
+    fn wait_for_data(&mut self, _: u32) -> bool {
+        if let Some(last_update) = self.last_update {
+            while last_update.elapsed() < FRAME_TIME {
+                std::thread::yield_now();
+            }
+        }
+
+        self.last_update = Some(Instant::now());
         true
     }
 
     fn signal_data_ready(&mut self) -> Result<(), TelemetryError> {
-        // For testing, just generate new data
-        self.update_data();
         Ok(())
     }
 
@@ -96,21 +97,5 @@ mod tests {
         // Test that we can get data updates
         assert!(source.wait_for_data(20));
         target.signal_data_ready().unwrap();
-    }
-
-    #[test]
-    fn test_data_variation() {
-        let mut source = MockTelemetry::open().unwrap();
-        let initial_data = source.as_slice().to_vec();
-
-        // Get new data
-        assert!(source.wait_for_data(20));
-
-        // Verify data changed
-        assert_ne!(
-            source.as_slice(),
-            &initial_data[..],
-            "Data should change between updates"
-        );
     }
 }

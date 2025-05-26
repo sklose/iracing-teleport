@@ -99,8 +99,8 @@ pub fn run(bind: &str, unicast: bool, group: String, shutdown: Receiver<()>) -> 
                     last_update = Instant::now();
                     updates += 1;
 
-                    if start_time.elapsed() >= Duration::from_secs(30) {
-                        let rate = updates as f64 / 30.0;
+                    if start_time.elapsed() >= Duration::from_secs(5) {
+                        let rate = updates as f64 / 5.0;
                         println!("[target] {:.2} updates/sec", rate);
                         updates = 0;
                         start_time = Instant::now();

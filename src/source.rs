@@ -40,16 +40,6 @@ fn try_connect_telemetry(shutdown: &Receiver<()>) -> io::Result<Option<Telemetry
     Ok(result)
 }
 
-fn try_compress_data(data: &[u8], buf: &mut [u8]) -> Option<usize> {
-    match compress_to_buffer(data, None, true, buf) {
-        Ok(len) => Some(len),
-        Err(e) => {
-            eprintln!("LZ4 compression failed: {}. Skipping this update.", e);
-            None
-        }
-    }
-}
-
 pub fn run(bind: &str, target: &str, unicast: bool, shutdown: Receiver<()>) -> io::Result<()> {
     let socket = UdpSocket::bind(bind)
         .map_err(|e| io::Error::new(e.kind(), format!("Failed to bind UDP socket: {}", e)))?;
@@ -122,17 +112,21 @@ pub fn run(bind: &str, target: &str, unicast: bool, shutdown: Receiver<()>) -> i
         last_data_time = Instant::now();
 
         // Compress the memory content
-        let Some(len) = try_compress_data(telemetry.as_slice(), &mut compression_buf) else {
-            continue;
+        let len = match compress_to_buffer(telemetry.as_slice(), None, true, &mut compression_buf) {
+            Ok(len) => len,
+            Err(e) => {
+                println!("LZ4 compression failed: {}. Skipping this update.", e);
+                continue;
+            }
         };
 
-        // Send the compressed data
+        // Send the compressed data in fragments
         let send_result = if !unicast {
-            sender.send(&compression_buf[..len], len, |data| {
+            sender.send(&compression_buf[..len], |data| {
                 socket.send_to(data, target).map(|_| ())
             })
         } else {
-            sender.send(&compression_buf[..len], len, |data| {
+            sender.send(&compression_buf[..len], |data| {
                 socket.send(data).map(|_| ())
             })
         };
@@ -140,8 +134,8 @@ pub fn run(bind: &str, target: &str, unicast: bool, shutdown: Receiver<()>) -> i
         send_result?;
         updates += 1;
 
-        if start_time.elapsed() >= Duration::from_secs(30) {
-            let rate = updates as f64 / 30.0;
+        if start_time.elapsed() >= Duration::from_secs(5) {
+            let rate = updates as f64 / 5.0;
             println!("[source] {:.2} updates/sec", rate);
             updates = 0;
             start_time = Instant::now();
