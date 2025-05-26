@@ -1,41 +1,18 @@
-use std::fmt;
 use windows::{
     Win32::Foundation::*, Win32::System::Memory::*, Win32::System::Threading::*, core::*,
 };
 
-#[derive(Debug)]
-pub enum TelemetryError {
-    Unavailable,
-    Other(windows::core::Error),
-}
+use super::{TelemetryError, TelemetryProvider};
 
-impl fmt::Display for TelemetryError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            TelemetryError::Unavailable => write!(f, "Telemetry not available"),
-            TelemetryError::Other(e) => write!(f, "Windows error: {}", e),
-        }
-    }
-}
-
-impl std::error::Error for TelemetryError {}
-
-impl From<windows::core::Error> for TelemetryError {
-    fn from(err: windows::core::Error) -> Self {
-        TelemetryError::Other(err)
-    }
-}
-
-pub struct Telemetry {
+pub struct WindowsTelemetry {
     h_map: HANDLE,
     h_event: HANDLE,
     view: *mut u8,
     size: usize,
 }
 
-impl Telemetry {
-    /// Opens an existing telemetry mapping for reading (source mode)
-    pub fn open() -> std::result::Result<Self, TelemetryError> {
+impl TelemetryProvider for WindowsTelemetry {
+    fn open() -> std::result::Result<Self, TelemetryError> {
         unsafe {
             // Try to open the event
             let h_event = match OpenEventW(
@@ -61,8 +38,8 @@ impl Telemetry {
             let view = h_view.Value as *mut u8;
 
             if view.is_null() {
-                CloseHandle(h_map)?;
-                CloseHandle(h_event)?;
+                CloseHandle(h_map).ok();
+                CloseHandle(h_event).ok();
                 return Err(windows::core::Error::from_win32().into());
             }
 
@@ -91,8 +68,7 @@ impl Telemetry {
         }
     }
 
-    /// Creates a new telemetry mapping for writing (target mode)
-    pub fn create(size: usize) -> std::result::Result<Self, TelemetryError> {
+    fn create(size: usize) -> std::result::Result<Self, TelemetryError> {
         unsafe {
             let h_map = CreateFileMappingW(
                 INVALID_HANDLE_VALUE,
@@ -101,7 +77,8 @@ impl Telemetry {
                 0,
                 size as u32,
                 w!("Local\\IRSDKMemMapFileName"),
-            )?;
+            )
+            .map_err(|e| TelemetryError::Other(Box::new(e)))?;
 
             if h_map.is_invalid() {
                 return Err(windows::core::Error::from_win32().into());
@@ -118,7 +95,8 @@ impl Telemetry {
                 false, // auto reset
                 false, // initial state: not signaled
                 w!("Local\\IRSDKDataValidEvent"),
-            )?;
+            )
+            .map_err(|e| TelemetryError::Other(Box::new(e)))?;
 
             if h_event.is_invalid() {
                 UnmapViewOfFile(MEMORY_MAPPED_VIEW_ADDRESS {
@@ -137,36 +115,31 @@ impl Telemetry {
         }
     }
 
-    /// Waits for the data valid event with a timeout
-    pub fn wait_for_data(&self, timeout_ms: u32) -> bool {
+    fn wait_for_data(&self, timeout_ms: u32) -> bool {
         unsafe { WaitForSingleObject(self.h_event, timeout_ms) == WAIT_EVENT(0) }
     }
 
-    /// Signals that new data is available
-    pub fn signal_data_ready(&self) -> windows::core::Result<()> {
+    fn signal_data_ready(&self) -> std::result::Result<(), TelemetryError> {
         unsafe {
-            SetEvent(self.h_event)?;
+            SetEvent(self.h_event).map_err(|e| TelemetryError::Other(Box::new(e)))?;
             Ok(())
         }
     }
 
-    /// Gets a slice of the mapped memory
-    pub fn as_slice(&self) -> &[u8] {
+    fn as_slice(&self) -> &[u8] {
         unsafe { std::slice::from_raw_parts(self.view, self.size) }
     }
 
-    /// Gets a mutable slice of the mapped memory
-    pub fn as_slice_mut(&mut self) -> &mut [u8] {
+    fn as_slice_mut(&mut self) -> &mut [u8] {
         unsafe { std::slice::from_raw_parts_mut(self.view, self.size) }
     }
 
-    /// Returns the size of the mapped memory
-    pub fn size(&self) -> usize {
+    fn size(&self) -> usize {
         self.size
     }
 }
 
-impl Drop for Telemetry {
+impl Drop for WindowsTelemetry {
     fn drop(&mut self) {
         unsafe {
             let _ = UnmapViewOfFile(MEMORY_MAPPED_VIEW_ADDRESS {
@@ -175,5 +148,11 @@ impl Drop for Telemetry {
             let _ = CloseHandle(self.h_map);
             let _ = CloseHandle(self.h_event);
         }
+    }
+}
+
+impl From<windows::core::Error> for TelemetryError {
+    fn from(err: windows::core::Error) -> Self {
+        TelemetryError::Other(Box::new(err))
     }
 }

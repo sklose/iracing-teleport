@@ -6,10 +6,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::telemetry::Telemetry;
+use crate::protocol::Receiver as ProtocolReceiver;
+use crate::telemetry::{Telemetry, TelemetryProvider};
 
 const TELEMETRY_TIMEOUT: Duration = Duration::from_secs(10);
-const MAPPING_SIZE: usize = 32 * 1024 * 1024; // 32 MB
+const MAPPING_SIZE: usize = 2 * 1024 * 1024; // 2 MB
 
 fn create_telemetry() -> io::Result<Telemetry> {
     let telemetry = Telemetry::create(MAPPING_SIZE)
@@ -58,7 +59,8 @@ pub fn run(bind: &str, unicast: bool, group: String, shutdown: Receiver<()>) -> 
         setup_multicast(&socket, bind, &group)?;
     }
 
-    let mut rcv_buf = [0u8; 64 * 1024];
+    let mut rcv_buf = [0u8; 65_536];
+    let mut protocol_receiver = ProtocolReceiver::new(MAPPING_SIZE);
     let mut telemetry: Option<Telemetry> = None;
     let mut last_update = Instant::now();
     let mut start_time = Instant::now();
@@ -77,31 +79,32 @@ pub fn run(bind: &str, unicast: bool, group: String, shutdown: Receiver<()>) -> 
 
         match socket.recv_from(&mut rcv_buf) {
             Ok((amt, _)) => {
-                // Create telemetry if it doesn't exist
-                if telemetry.is_none() {
-                    telemetry = Some(create_telemetry()?);
-                }
+                // Process the received datagram
+                if let Some(data) = protocol_receiver.process_datagram(&rcv_buf[..amt]) {
+                    // Create telemetry if it doesn't exist
+                    if telemetry.is_none() {
+                        telemetry = Some(create_telemetry()?);
+                    }
 
-                // Process the received data
-                let telemetry = telemetry.as_mut().unwrap();
+                    // Process the complete payload
+                    let telemetry = telemetry.as_mut().unwrap();
+                    if !try_decompress_data(data, telemetry.as_slice_mut()) {
+                        continue;
+                    }
 
-                if !try_decompress_data(&rcv_buf[0..amt], telemetry.as_slice_mut()) {
-                    eprintln!("LZ4 decompression failed. Skipping this update.");
-                    continue;
-                }
+                    telemetry.signal_data_ready().map_err(|e| {
+                        io::Error::other(format!("Failed to signal data ready: {}", e))
+                    })?;
 
-                telemetry
-                    .signal_data_ready()
-                    .map_err(|e| io::Error::other(format!("Failed to signal data ready: {}", e)))?;
+                    last_update = Instant::now();
+                    updates += 1;
 
-                last_update = Instant::now();
-                updates += 1;
-
-                if start_time.elapsed() >= Duration::from_secs(30) {
-                    let rate = updates as f64 / 30.0;
-                    println!("[target] {:.2} updates/sec", rate);
-                    updates = 0;
-                    start_time = Instant::now();
+                    if start_time.elapsed() >= Duration::from_secs(30) {
+                        let rate = updates as f64 / 30.0;
+                        println!("[target] {:.2} updates/sec", rate);
+                        updates = 0;
+                        start_time = Instant::now();
+                    }
                 }
             }
             Err(e)

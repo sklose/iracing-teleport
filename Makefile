@@ -18,6 +18,10 @@ lint:
 build:
 	cargo build --target=$(TARGET) --release
 
+# Run tests of cross-platform bits
+test:
+	cargo test --target=$(TARGET) --release
+
 # Remove compiled artifacts
 clean:
 	cargo clean

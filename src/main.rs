@@ -2,10 +2,12 @@ use clap::{Parser, Subcommand};
 use std::io;
 use std::sync::mpsc;
 
+mod protocol;
 mod source;
 mod target;
 mod telemetry;
 
+/// UDP LZ4 Source/Target application with unicast and multicast support
 #[derive(Parser)]
 #[command(
     name = "iracing-teleport",

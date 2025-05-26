@@ -18,9 +18,6 @@ Features:
 - Efficient LZ4 compression for minimal network usage
 - Support for both unicast and multicast (default) communication
 
-Known Issues:
-iRacing's memory mapped file is 1MiB in size. The network protocol assumes that it will be able to compress the entire data in to a 64KiB UDP datagram. Telemetry updates will be dropped if they do not fit into a single datagram.
-
 ## Usage Examples
 
 ### Default Setup (Multicast)

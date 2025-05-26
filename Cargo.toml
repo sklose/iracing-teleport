@@ -4,13 +4,15 @@ authors = ["Sebastian Klose <mail@sklose.com>"]
 description = "A tool to send and receive telemetry data from iRacing"
 license = "MIT"
 repository = "https://github.com/sklose/iracing-teleport"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 
 [dependencies]
 lz4 = "1.24.0"
 clap = { version = "4.5", features = ["derive"] }
 ctrlc = "3"
+
+[target.'cfg(windows)'.dependencies]
 windows = { version = "0.61.1", features = [
     "Win32_Foundation", 
     "Win32_System_Memory", 

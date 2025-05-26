@@ -38,6 +38,9 @@ jobs:
       - name: Run build
         run: cargo build --target x86_64-pc-windows-gnu --release
 
+      - name: Run tests
+        run: cargo test --target x86_64-pc-windows-gnu --release
+
   release:
     name: Build Release Asset
     runs-on: ubuntu-latest

@@ -6,12 +6,17 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::telemetry::{Telemetry, TelemetryError};
+use crate::protocol::Sender;
+use crate::telemetry::{Telemetry, TelemetryError, TelemetryProvider};
 
 // Timeout before considering the connection lost
 const DISCONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
 // Individual wait interval to maintain shutdown responsiveness
 const WAIT_INTERVAL_MS: u32 = 200;
+
+// Maximum size of the compression buffer (2MB should be plenty)
+const MAX_COMPRESSED_SIZE: usize = 2 * 1024 * 1024;
 
 fn try_connect_telemetry(shutdown: &Receiver<()>) -> io::Result<Option<Telemetry>> {
     let result = match Telemetry::open() {
@@ -72,7 +77,8 @@ pub fn run(bind: &str, target: &str, unicast: bool, shutdown: Receiver<()>) -> i
         }
     };
 
-    let mut buf = [0u8; 64 * 1024];
+    let mut compression_buf = vec![0u8; MAX_COMPRESSED_SIZE];
+    let mut sender = Sender::new(MAX_COMPRESSED_SIZE);
     let mut start_time = Instant::now();
     let mut updates = 0;
     let mut last_data_time = Instant::now();
@@ -116,23 +122,22 @@ pub fn run(bind: &str, target: &str, unicast: bool, shutdown: Receiver<()>) -> i
         last_data_time = Instant::now();
 
         // Compress the memory content
-        let Some(len) = try_compress_data(telemetry.as_slice(), &mut buf) else {
+        let Some(len) = try_compress_data(telemetry.as_slice(), &mut compression_buf) else {
             continue;
         };
 
         // Send the compressed data
         let send_result = if !unicast {
-            socket
-                .send_to(&buf[..len], target)
-                .map_err(|e| io::Error::new(e.kind(), format!("Failed to send data: {}", e)))
+            sender.send(&compression_buf[..len], len, |data| {
+                socket.send_to(data, target).map(|_| ())
+            })
         } else {
-            socket
-                .send(&buf[..len])
-                .map_err(|e| io::Error::new(e.kind(), format!("Failed to send data: {}", e)))
+            sender.send(&compression_buf[..len], len, |data| {
+                socket.send(data).map(|_| ())
+            })
         };
 
         send_result?;
-
         updates += 1;
 
         if start_time.elapsed() >= Duration::from_secs(30) {
