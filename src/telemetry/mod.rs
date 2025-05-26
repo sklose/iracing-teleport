@@ -1,5 +1,7 @@
 use std::fmt;
 
+pub const MAX_TELEMETRY_SIZE: usize = 2 * 1024 * 1024; // 2 MB
+
 #[derive(Debug)]
 pub enum TelemetryError {
     #[allow(dead_code)]

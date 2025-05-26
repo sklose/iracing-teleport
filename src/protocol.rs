@@ -20,10 +20,10 @@ pub struct Sender {
 }
 
 impl Sender {
-    pub fn new(max_payload_size: usize) -> Self {
+    pub fn new() -> Self {
         Self {
             sequence: 0,
-            buffer: vec![0; max_payload_size + MAX_DATAGRAM_SIZE],
+            buffer: vec![0; MAX_DATAGRAM_SIZE],
         }
     }
 
@@ -189,7 +189,7 @@ mod tests {
     fn test_single_fragment_send_receive() {
         let data = create_test_data(1000);
         let mut sent_datagrams = Vec::new();
-        let mut sender = Sender::new(MAX_DATAGRAM_SIZE);
+        let mut sender = Sender::new();
 
         // Send the data
         sender
@@ -214,7 +214,7 @@ mod tests {
     fn test_multi_fragment_send_receive() {
         let data = create_test_data(MAX_PAYLOAD_SIZE * 3 + 1000); // Will require 4 fragments
         let mut sent_datagrams = Vec::new();
-        let mut sender = Sender::new(data.len());
+        let mut sender = Sender::new();
 
         // Send the data
         sender
@@ -242,7 +242,7 @@ mod tests {
     fn test_out_of_order_fragments() {
         let data = create_test_data(MAX_PAYLOAD_SIZE * 2 + 1000); // Will require 3 fragments
         let mut sent_datagrams = Vec::new();
-        let mut sender = Sender::new(data.len());
+        let mut sender = Sender::new();
 
         // Send the data
         sender
@@ -265,7 +265,7 @@ mod tests {
     #[test]
     fn test_sequence_numbers() {
         let data = create_test_data(1000);
-        let mut sender = Sender::new(MAX_DATAGRAM_SIZE);
+        let mut sender = Sender::new();
         let mut last_sequence: Option<u32> = None;
 
         // Send the data multiple times
@@ -291,7 +291,7 @@ mod tests {
     fn test_duplicate_fragment_handling() {
         let data = create_test_data(MAX_PAYLOAD_SIZE * 2); // Will require 2 fragments
         let mut sent_datagrams = Vec::new();
-        let mut sender = Sender::new(data.len());
+        let mut sender = Sender::new();
 
         // Send the data
         sender
@@ -315,7 +315,7 @@ mod tests {
     fn test_invalid_fragment_number() {
         let data = create_test_data(1000);
         let mut sent_datagrams = Vec::new();
-        let mut sender = Sender::new(data.len());
+        let mut sender = Sender::new();
 
         // Send the data
         sender
@@ -334,19 +334,4 @@ mod tests {
         let mut receiver = Receiver::new(data.len());
         assert!(receiver.process_datagram(&corrupted).is_none());
     }
-
-    // #[test]
-    // fn test_oversized_data() {
-    //     // Create data that would require u16::MAX + 1 fragments
-    //     // Instead of actually allocating that much memory, we'll create a small buffer
-    //     // and calculate the required size
-    //     let required_size = MAX_PAYLOAD_SIZE * (u16::MAX as usize + 1);
-    //     let test_data = create_test_data(1024); // Small test buffer
-    //     let mut sender = Sender::new(1024);
-
-    //     // Attempt to send oversized data by passing the large size
-    //     let result = sender.send(&test_data, required_size, |_| Ok(()));
-    //     assert!(result.is_err());
-    //     assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
-    // }
 }

@@ -6,15 +6,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::protocol::Receiver as ProtocolReceiver;
+use crate::protocol::{MAX_DATAGRAM_SIZE, Receiver as ProtocolReceiver};
 use crate::stats::StatisticsPrinter;
-use crate::telemetry::{Telemetry, TelemetryProvider};
+use crate::telemetry::{MAX_TELEMETRY_SIZE, Telemetry, TelemetryProvider};
 
 const TELEMETRY_TIMEOUT: Duration = Duration::from_secs(10);
-const MAPPING_SIZE: usize = 2 * 1024 * 1024; // 2 MB
 
 fn create_telemetry() -> io::Result<Telemetry> {
-    let telemetry = Telemetry::create(MAPPING_SIZE)
+    let telemetry = Telemetry::create(MAX_TELEMETRY_SIZE)
         .map_err(|e| io::Error::other(format!("Failed to create telemetry: {}", e)))?;
     println!("Memory-mapped file and data-valid event created.");
     Ok(telemetry)
@@ -60,8 +59,8 @@ pub fn run(bind: &str, unicast: bool, group: String, shutdown: Receiver<()>) -> 
         setup_multicast(&socket, bind, &group)?;
     }
 
-    let mut rcv_buf = [0u8; 65_536];
-    let mut protocol_receiver = ProtocolReceiver::new(MAPPING_SIZE);
+    let mut rcv_buf = [0u8; MAX_DATAGRAM_SIZE];
+    let mut protocol_receiver = ProtocolReceiver::new(MAX_TELEMETRY_SIZE);
     let mut telemetry: Option<Telemetry> = None;
     let mut last_update = Instant::now();
     let mut stats = StatisticsPrinter::new("target");

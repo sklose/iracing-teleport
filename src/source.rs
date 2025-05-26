@@ -69,7 +69,7 @@ pub fn run(bind: &str, target: &str, unicast: bool, shutdown: Receiver<()>) -> i
     };
 
     let mut compression_buf = vec![0u8; MAX_COMPRESSED_SIZE];
-    let mut sender = Sender::new(MAX_COMPRESSED_SIZE);
+    let mut sender = Sender::new();
     let mut stats = StatisticsPrinter::new("source");
     let mut last_data_time = Instant::now();
 
