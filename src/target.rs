@@ -79,6 +79,8 @@ pub fn run(bind: &str, unicast: bool, group: String, shutdown: Receiver<()>) -> 
 
         match socket.recv_from(&mut rcv_buf) {
             Ok((amt, _)) => {
+                stats.add_protocol_bytes(amt);
+
                 // Process the received datagram
                 if let Some(data) = protocol_receiver.process_datagram(&rcv_buf[..amt]) {
                     // Create telemetry if it doesn't exist
@@ -89,8 +91,12 @@ pub fn run(bind: &str, unicast: bool, group: String, shutdown: Receiver<()>) -> 
                     // Process the complete payload
                     let telemetry = telemetry.as_mut().unwrap();
                     if !try_decompress_data(data, telemetry.as_slice_mut()) {
+                        // Reset accumulated bytes since we failed to process this message
                         continue;
                     }
+
+                    // Track both data and protocol bytes for the complete message
+                    stats.add_bytes(data.len());
 
                     telemetry.signal_data_ready().map_err(|e| {
                         io::Error::other(format!("Failed to signal data ready: {}", e))
@@ -113,7 +119,7 @@ pub fn run(bind: &str, unicast: bool, group: String, shutdown: Receiver<()>) -> 
                         "No updates received for {} seconds, closing telemetry",
                         TELEMETRY_TIMEOUT.as_secs()
                     );
-                    telemetry = None;
+                    telemetry = None; // Reset accumulated bytes on timeout
                 }
             }
             Err(e) => {

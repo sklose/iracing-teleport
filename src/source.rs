@@ -19,7 +19,6 @@ const WAIT_INTERVAL_MS: u32 = 200;
 // Maximum size of the compression buffer (2MB should be plenty)
 const MAX_COMPRESSED_SIZE: usize = 4 * 1024 * 1024;
 
-
 fn try_connect_telemetry(shutdown: &Receiver<()>) -> io::Result<Option<Telemetry>> {
     let result = match Telemetry::open() {
         Ok(telemetry) => {
@@ -112,8 +111,10 @@ pub fn run(bind: &str, target: &str, unicast: bool, shutdown: Receiver<()>) -> i
         // Got data, reset the timeout
         last_data_time = Instant::now();
 
+        let data = telemetry.as_slice();
+
         // Compress the memory content
-        let len = match compress_to_buffer(telemetry.as_slice(), None, true, &mut compression_buf) {
+        let len = match compress_to_buffer(data, None, true, &mut compression_buf) {
             Ok(len) => len,
             Err(e) => {
                 println!("LZ4 compression failed: {}. Skipping this update.", e);
@@ -121,20 +122,24 @@ pub fn run(bind: &str, target: &str, unicast: bool, shutdown: Receiver<()>) -> i
             }
         };
 
+        stats.add_bytes(len);
+
         // Send the compressed data in fragments
         let send_result = if !unicast {
             sender.send(&compression_buf[..len], |data| {
+                stats.add_protocol_bytes(data.len());
                 socket.send_to(data, target).map(|_| ())
             })
         } else {
             sender.send(&compression_buf[..len], |data| {
+                stats.add_protocol_bytes(data.len());
                 socket.send(data).map(|_| ())
             })
         };
 
         send_result?;
-        stats.add_update();
 
+        stats.add_update();
         if stats.should_print() {
             stats.print_and_reset();
         }
