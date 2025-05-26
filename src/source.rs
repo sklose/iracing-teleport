@@ -16,7 +16,7 @@ const DISCONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const WAIT_INTERVAL_MS: u32 = 200;
 
 // Maximum size of the compression buffer (2MB should be plenty)
-const MAX_COMPRESSED_SIZE: usize = 2 * 1024 * 1024;
+const MAX_COMPRESSED_SIZE: usize = 4 * 1024 * 1024;
 
 fn try_connect_telemetry(shutdown: &Receiver<()>) -> io::Result<Option<Telemetry>> {
     let result = match Telemetry::open() {

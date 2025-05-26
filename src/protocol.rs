@@ -1,10 +1,10 @@
 use std::io;
 
 // Maximum UDP payload size (leaving some headroom for IP/UDP headers)
-const MAX_DATAGRAM_SIZE: usize = 65_000;
+pub const MAX_DATAGRAM_SIZE: usize = 9_000;
 
 // Maximum payload size per datagram (header + data)
-const MAX_PAYLOAD_SIZE: usize = MAX_DATAGRAM_SIZE - std::mem::size_of::<DatagramHeader>();
+pub const MAX_PAYLOAD_SIZE: usize = MAX_DATAGRAM_SIZE - std::mem::size_of::<DatagramHeader>();
 
 #[repr(C, packed)]
 struct DatagramHeader {
