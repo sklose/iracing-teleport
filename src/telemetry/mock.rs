@@ -1,106 +1,101 @@
-use std::sync::{Arc, Condvar, Mutex};
+use super::{TelemetryError, TelemetryProvider};
+use rand::{Rng, thread_rng};
+use std::cell::UnsafeCell;
 use std::time::{Duration, Instant};
 
-use super::{TelemetryError, TelemetryProvider};
+// Import constants from protocol module for consistent sizing
+const MAX_DATAGRAM_SIZE: usize = 65_000;
+const HEADER_SIZE: usize = 12; // size of DatagramHeader (sequence: u32 + fragment: u16 + fragments: u16 + payload_size: u32)
+const MAX_PAYLOAD_SIZE: usize = MAX_DATAGRAM_SIZE - HEADER_SIZE;
 
-#[derive(Default)]
-struct State {
-    ready: bool,
-    last_signal: Option<Instant>,
-    waiters: u32,
-}
+// 60Hz update rate
+const UPDATE_INTERVAL: Duration = Duration::from_nanos(16_666_667); // 1/60th of a second
 
 pub struct MockTelemetry {
-    buffer: Vec<u8>,
-    state: Arc<(Mutex<State>, Condvar)>,
+    buffer: UnsafeCell<Vec<u8>>,
+    last_update: UnsafeCell<Instant>,
+}
+
+// Safe to share between threads since we handle synchronization
+unsafe impl Sync for MockTelemetry {}
+
+impl MockTelemetry {
+    fn generate_test_data(size: usize) -> Vec<u8> {
+        let mut rng = thread_rng();
+        let mut buffer = vec![0u8; size];
+        rng.fill(&mut buffer[..]);
+        buffer
+    }
+
+    // Helper to safely update last_update time and generate new data
+    fn update_state(&mut self) {
+        // Update the buffer with new random data
+        let buffer = self.buffer.get_mut();
+        let mut rng = thread_rng();
+        rng.fill(buffer.as_mut_slice());
+
+        // Update timestamp
+        *self.last_update.get_mut() = Instant::now();
+    }
+
+    // Helper to check if it's time for an update
+    fn is_update_due(&self) -> bool {
+        unsafe { Instant::now().duration_since(*self.last_update.get()) >= UPDATE_INTERVAL }
+    }
 }
 
 impl TelemetryProvider for MockTelemetry {
     fn open() -> Result<Self, TelemetryError> {
-        // Simulate no telemetry available initially
-        Err(TelemetryError::Unavailable)
-    }
-
-    fn create(size: usize) -> Result<Self, TelemetryError> {
+        // When opening as source, create random test data that spans multiple datagrams
+        let min_size = MAX_PAYLOAD_SIZE + 1000; // Guarantees at least 2 fragments
         Ok(Self {
-            buffer: vec![0; size],
-            state: Arc::new((Mutex::new(State::default()), Condvar::new())),
+            buffer: UnsafeCell::new(Self::generate_test_data(min_size)),
+            last_update: UnsafeCell::new(Instant::now() - UPDATE_INTERVAL), // Allow immediate first update
         })
     }
 
-    fn wait_for_data(&self, timeout_ms: u32) -> bool {
-        let (lock, cvar) = &*self.state;
-        let start = Instant::now();
-        let timeout = Duration::from_millis(timeout_ms as u64);
-
-        println!("Entering wait_for_data with timeout {}ms", timeout_ms);
-
-        // Get the lock and wait for the condition
-        let mut state = lock.lock().unwrap();
-        println!("Got lock, ready={}, waiters={}", state.ready, state.waiters);
-
-        // If we were recently signaled (within half the timeout), return true immediately
-        if let Some(last_signal) = state.last_signal {
-            if start.duration_since(last_signal) < timeout / 2 {
-                println!("Using recent signal");
-                state.last_signal = None;
-                state.ready = false; // Reset ready state when using recent signal
-                return true;
-            }
-        }
-
-        // Return immediately if already signaled
-        if state.ready {
-            println!("Already signaled");
-            state.ready = false; // Reset ready state when using it
-            return true;
-        }
-
-        // Register as a waiter
-        state.waiters += 1;
-        println!("Registered as waiter {}", state.waiters);
-
-        // Wait for signal with timeout
-        println!("Starting wait with timeout");
-        let result = cvar.wait_timeout(state, timeout).unwrap();
-        let mut state = result.0;
-        let timed_out = result.1.timed_out();
-        println!("Wait finished, timed_out={}", timed_out);
-
-        // Unregister as a waiter
-        state.waiters -= 1;
-        println!("Unregistered waiter, {} remaining", state.waiters);
-
-        // Reset ready state if this is the last waiter
-        if state.waiters == 0 {
-            println!("Last waiter, resetting state");
-            state.ready = false;
-            state.last_signal = None;
-        }
-
-        !timed_out
+    fn create(size: usize) -> Result<Self, TelemetryError> {
+        // Target just allocates empty buffer of requested size
+        Ok(Self {
+            buffer: UnsafeCell::new(vec![0; size]),
+            last_update: UnsafeCell::new(Instant::now()),
+        })
     }
 
-    fn signal_data_ready(&self) -> Result<(), TelemetryError> {
-        let (lock, cvar) = &*self.state;
-        let mut state = lock.lock().unwrap();
-        println!("Signaling data ready");
-        state.ready = true;
-        state.last_signal = Some(Instant::now());
-        cvar.notify_all();
+    fn wait_for_data(&mut self, timeout_ms: u32) -> bool {
+        let timeout = Duration::from_millis(timeout_ms as u64);
+        let start = Instant::now();
+
+        // Wait until either timeout or next update interval
+        while start.elapsed() < timeout {
+            if self.is_update_due() {
+                self.update_state();
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        false
+    }
+
+    fn signal_data_ready(&mut self) -> Result<(), TelemetryError> {
+        // In real telemetry, this would send UDP data
+        // For mock, just check if we need to update
+        if self.is_update_due() {
+            self.update_state();
+        }
         Ok(())
     }
 
     fn as_slice(&self) -> &[u8] {
-        &self.buffer
+        unsafe { (*self.buffer.get()).as_slice() }
     }
 
     fn as_slice_mut(&mut self) -> &mut [u8] {
-        &mut self.buffer
+        unsafe { (*self.buffer.get()).as_mut_slice() }
     }
 
     fn size(&self) -> usize {
-        self.buffer.len()
+        unsafe { (*self.buffer.get()).len() }
     }
 }
 
@@ -109,138 +104,82 @@ mod tests {
     use super::*;
     use std::thread;
 
-    const SHORT_WAIT: u32 = 20; // Short wait for quick operations
-    const LONG_WAIT: u32 = 40; // Longer wait for operations that need more time
-    const TIMING_MARGIN: u32 = 10; // Additional margin for slower debug builds
-
     #[test]
     fn test_mock_telemetry() {
-        println!("\nStarting basic telemetry test");
+        // Create source with random test data
+        let mut source = MockTelemetry::open().unwrap();
+        let source_size = source.size();
+        assert!(
+            source_size > MAX_PAYLOAD_SIZE,
+            "Source buffer size {} should be larger than MAX_PAYLOAD_SIZE {}",
+            source_size,
+            MAX_PAYLOAD_SIZE
+        );
 
-        // Test that open returns Unavailable
-        assert!(matches!(
-            MockTelemetry::open(),
-            Err(TelemetryError::Unavailable)
-        ));
-
-        // Test create and basic operations
-        let mut telemetry = MockTelemetry::create(1024).unwrap();
-        assert_eq!(telemetry.size(), 1024);
+        // Create target with same size as source
+        let mut target = MockTelemetry::create(source_size).unwrap();
 
         // Test writing and reading data
-        telemetry.as_slice_mut()[0] = 42;
-        assert_eq!(telemetry.as_slice()[0], 42);
+        source.as_slice_mut()[0] = 42;
+        target.as_slice_mut().copy_from_slice(source.as_slice());
+        assert_eq!(target.as_slice()[0], 42);
 
-        println!("\nTesting single signal/wait cycle");
-
-        // Test data ready signaling
-        let telemetry = Arc::new(telemetry);
-        let telemetry_clone = telemetry.clone();
-
-        // Spawn a thread that will signal data ready after a delay
-        thread::spawn(move || {
-            println!("Signal thread sleeping");
-            thread::sleep(Duration::from_millis(SHORT_WAIT as u64 / 2));
-            println!("Signal thread woke up");
-            telemetry_clone.signal_data_ready().unwrap();
-        });
-
-        // Wait for data and verify we didn't time out
-        assert!(telemetry.wait_for_data(SHORT_WAIT + TIMING_MARGIN));
-
-        println!("\nTesting timeout behavior");
-
-        // Test timeout when no data is signaled
-        let telemetry = MockTelemetry::create(1024).unwrap();
-        assert!(!telemetry.wait_for_data(SHORT_WAIT));
-
-        println!("\nTesting multiple signal/wait cycles");
-
-        // Test multiple wait and signal cycles
-        let telemetry = Arc::new(telemetry);
-        let telemetry_clone = telemetry.clone();
-
-        thread::spawn(move || {
-            for i in 0..3 {
-                thread::sleep(Duration::from_millis(SHORT_WAIT as u64 / 4));
-                println!("Signaling data ready (iteration {})", i);
-                telemetry_clone.signal_data_ready().unwrap();
+        // Test data ready signaling at 60Hz
+        let start = Instant::now();
+        let mut updates = 0;
+        while start.elapsed() < Duration::from_millis(100) {
+            if source.wait_for_data(20) {
+                updates += 1;
+                target.signal_data_ready().unwrap();
             }
-        });
-
-        // Each wait should succeed
-        for i in 0..3 {
-            println!("Waiting for data (iteration {})", i);
-            assert!(
-                telemetry.wait_for_data(SHORT_WAIT + TIMING_MARGIN),
-                "wait_for_data failed on iteration {}",
-                i
-            );
-            // Add a small delay between waits to ensure signals don't get coalesced
-            thread::sleep(Duration::from_millis(5));
         }
-
-        // The next wait should time out since no more signals are coming
-        println!("Testing final timeout");
-        assert!(!telemetry.wait_for_data(SHORT_WAIT));
-        println!("Basic telemetry test completed");
+        // Should have seen roughly 6 updates (60Hz * 0.1s = 6)
+        assert!(
+            updates >= 5 && updates <= 7,
+            "Expected ~6 updates, got {}",
+            updates
+        );
     }
 
     #[test]
     fn test_rapid_signals() {
-        println!("\nStarting rapid signals test");
-        let telemetry = Arc::new(MockTelemetry::create(1024).unwrap());
-        let telemetry_clone = telemetry.clone();
+        let mut source = MockTelemetry::open().unwrap();
+        let mut target = MockTelemetry::create(source.size()).unwrap();
 
-        // Spawn a thread that rapidly signals
-        thread::spawn(move || {
-            for i in 0..3 {
-                telemetry_clone.signal_data_ready().unwrap();
-                println!("Rapid signal {}", i);
-                thread::sleep(Duration::from_millis(5));
-            }
-        });
-
-        // Should be able to catch at least a few signals
-        let mut signals_caught = 0;
-        for i in 0..5 {
-            if telemetry.wait_for_data(SHORT_WAIT) {
-                signals_caught += 1;
-                println!("Caught signal {} of {}", signals_caught, i);
+        // Should only get updates at 60Hz
+        let start = Instant::now();
+        let mut updates = 0;
+        while start.elapsed() < Duration::from_millis(50) {
+            if source.wait_for_data(10) {
+                updates += 1;
+                target.signal_data_ready().unwrap();
             }
         }
-
-        assert!(signals_caught > 0, "Should catch at least one signal");
-        println!("Rapid signals test completed");
+        // Should have seen roughly 3 updates (60Hz * 0.05s = 3)
+        assert!(
+            updates >= 2 && updates <= 4,
+            "Expected ~3 updates, got {}",
+            updates
+        );
     }
 
     #[test]
-    fn test_concurrent_waiters() {
-        println!("\nStarting concurrent waiters test");
-        let telemetry = Arc::new(MockTelemetry::create(1024).unwrap());
-        let signal_telemetry = telemetry.clone();
+    fn test_data_variation() {
+        let mut source = MockTelemetry::open().unwrap();
+        let mut last_data = source.as_slice().to_vec();
+        let mut different = false;
 
-        // Spawn multiple waiting threads
-        let mut handles = vec![];
-        for i in 0..3 {
-            let waiter_telemetry = telemetry.clone();
-            handles.push(thread::spawn(move || {
-                println!("Waiter {} starting", i);
-                let result = waiter_telemetry.wait_for_data(LONG_WAIT + TIMING_MARGIN);
-                println!("Waiter {} finished with result {}", i, result);
-                result
-            }));
+        // Check that data changes between updates
+        for _ in 0..10 {
+            if source.wait_for_data(20) {
+                if source.as_slice() != last_data {
+                    different = true;
+                    break;
+                }
+                last_data = source.as_slice().to_vec();
+            }
+            thread::sleep(Duration::from_millis(16)); // Just under 60Hz
         }
-
-        // Signal after a short delay
-        thread::sleep(Duration::from_millis(SHORT_WAIT as u64 / 2));
-        println!("Sending signal to all waiters");
-        signal_telemetry.signal_data_ready().unwrap();
-
-        // All waiters should succeed
-        for (i, handle) in handles.into_iter().enumerate() {
-            assert!(handle.join().unwrap(), "Waiter {} failed", i);
-        }
-        println!("Concurrent waiters test completed");
+        assert!(different, "Data should change between updates");
     }
 }

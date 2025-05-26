@@ -2,6 +2,7 @@ use std::fmt;
 
 #[derive(Debug)]
 pub enum TelemetryError {
+    #[allow(dead_code)]
     Unavailable,
     #[allow(dead_code)]
     Other(Box<dyn std::error::Error + Send + Sync>),
@@ -31,10 +32,10 @@ pub trait TelemetryProvider {
         Self: Sized;
 
     /// Waits for the data valid event with a timeout
-    fn wait_for_data(&self, timeout_ms: u32) -> bool;
+    fn wait_for_data(&mut self, timeout_ms: u32) -> bool;
 
     /// Signals that new data is available
-    fn signal_data_ready(&self) -> Result<(), TelemetryError>;
+    fn signal_data_ready(&mut self) -> Result<(), TelemetryError>;
 
     /// Gets a slice of the mapped memory
     fn as_slice(&self) -> &[u8];

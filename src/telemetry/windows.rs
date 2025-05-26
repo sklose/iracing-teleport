@@ -115,11 +115,11 @@ impl TelemetryProvider for WindowsTelemetry {
         }
     }
 
-    fn wait_for_data(&self, timeout_ms: u32) -> bool {
+    fn wait_for_data(&mut self, timeout_ms: u32) -> bool {
         unsafe { WaitForSingleObject(self.h_event, timeout_ms) == WAIT_EVENT(0) }
     }
 
-    fn signal_data_ready(&self) -> std::result::Result<(), TelemetryError> {
+    fn signal_data_ready(&mut self) -> std::result::Result<(), TelemetryError> {
         unsafe {
             SetEvent(self.h_event).map_err(|e| TelemetryError::Other(Box::new(e)))?;
             Ok(())
