@@ -15,7 +15,7 @@ The tool consists of two components:
 2. **Target**: Runs on your remote computer, receives the data, and creates a local memory-mapped file that simulates iRacing's telemetry interface
 
 Features:
-- Efficient LZ4 compression for minimal network usage
+- LZ4 compression to reduce network usage
 - Support for both unicast and multicast (default) communication
 
 ## Usage Examples
@@ -66,7 +66,7 @@ iracing-teleport source --unicast --target 192.168.1.10:5000
 
 ## Tips
 
-- Use multicast (the default) if you want to receive telemetry on multiple computers
+- Use multicast (the default) if you want to receive telemetry on multiple computers or can't be bothered to manually specify the IP details
 - Use unicast if you have network issues with multicast or only need one receiver
 - The source will automatically reconnect if iRacing is restarted
 - The target will automatically reconnect if the source connection is lost
@@ -77,3 +77,4 @@ iracing-teleport source --unicast --target 192.168.1.10:5000
 - Network connectivity between the computers
 - UDP port access (default: 5000)
 - Multicast support on your network (if not using unicast)
+- 15 Mbps of available network bandwidth - preferably wired to keep latencies low
