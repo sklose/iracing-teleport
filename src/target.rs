@@ -7,6 +7,7 @@ use std::{
 };
 
 use crate::protocol::Receiver as ProtocolReceiver;
+use crate::stats::StatisticsPrinter;
 use crate::telemetry::{Telemetry, TelemetryProvider};
 
 const TELEMETRY_TIMEOUT: Duration = Duration::from_secs(10);
@@ -63,8 +64,7 @@ pub fn run(bind: &str, unicast: bool, group: String, shutdown: Receiver<()>) -> 
     let mut protocol_receiver = ProtocolReceiver::new(MAPPING_SIZE);
     let mut telemetry: Option<Telemetry> = None;
     let mut last_update = Instant::now();
-    let mut start_time = Instant::now();
-    let mut updates = 0;
+    let mut stats = StatisticsPrinter::new("target");
 
     // Set a short timeout on UDP receive to check for telemetry timeout
     socket
@@ -97,13 +97,10 @@ pub fn run(bind: &str, unicast: bool, group: String, shutdown: Receiver<()>) -> 
                     })?;
 
                     last_update = Instant::now();
-                    updates += 1;
+                    stats.add_update();
 
-                    if start_time.elapsed() >= Duration::from_secs(5) {
-                        let rate = updates as f64 / 5.0;
-                        println!("[target] {:.2} updates/sec", rate);
-                        updates = 0;
-                        start_time = Instant::now();
+                    if stats.should_print() {
+                        stats.print_and_reset();
                     }
                 }
             }

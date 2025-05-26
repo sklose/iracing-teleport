@@ -7,6 +7,7 @@ use std::{
 };
 
 use crate::protocol::Sender;
+use crate::stats::StatisticsPrinter;
 use crate::telemetry::{Telemetry, TelemetryError, TelemetryProvider};
 
 // Timeout before considering the connection lost
@@ -17,6 +18,7 @@ const WAIT_INTERVAL_MS: u32 = 200;
 
 // Maximum size of the compression buffer (2MB should be plenty)
 const MAX_COMPRESSED_SIZE: usize = 4 * 1024 * 1024;
+
 
 fn try_connect_telemetry(shutdown: &Receiver<()>) -> io::Result<Option<Telemetry>> {
     let result = match Telemetry::open() {
@@ -69,8 +71,7 @@ pub fn run(bind: &str, target: &str, unicast: bool, shutdown: Receiver<()>) -> i
 
     let mut compression_buf = vec![0u8; MAX_COMPRESSED_SIZE];
     let mut sender = Sender::new(MAX_COMPRESSED_SIZE);
-    let mut start_time = Instant::now();
-    let mut updates = 0;
+    let mut stats = StatisticsPrinter::new("source");
     let mut last_data_time = Instant::now();
 
     loop {
@@ -132,13 +133,10 @@ pub fn run(bind: &str, target: &str, unicast: bool, shutdown: Receiver<()>) -> i
         };
 
         send_result?;
-        updates += 1;
+        stats.add_update();
 
-        if start_time.elapsed() >= Duration::from_secs(5) {
-            let rate = updates as f64 / 5.0;
-            println!("[source] {:.2} updates/sec", rate);
-            updates = 0;
-            start_time = Instant::now();
+        if stats.should_print() {
+            stats.print_and_reset();
         }
     }
 }

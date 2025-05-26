@@ -6,6 +6,7 @@ mod protocol;
 mod source;
 mod target;
 mod telemetry;
+mod stats;
 
 /// UDP LZ4 Source/Target application with unicast and multicast support
 #[derive(Parser)]
