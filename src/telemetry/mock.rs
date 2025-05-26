@@ -1,6 +1,6 @@
 use super::{TelemetryError, TelemetryProvider};
-use crate::protocol::{MAX_PAYLOAD_SIZE};
-use rand::{Rng, thread_rng};
+use crate::protocol::MAX_PAYLOAD_SIZE;
+use rand::{Rng, rng};
 use std::cell::UnsafeCell;
 
 // Telemetry can be larger than a single datagram since the protocol handles fragmentation
@@ -15,7 +15,7 @@ unsafe impl Sync for MockTelemetry {}
 
 impl MockTelemetry {
     fn generate_test_data(size: usize) -> Vec<u8> {
-        let mut rng = thread_rng();
+        let mut rng = rng();
         let mut buffer = vec![0u8; size];
         rng.fill(&mut buffer[..]);
         buffer
@@ -24,7 +24,7 @@ impl MockTelemetry {
     fn update_data(&mut self) {
         // Update the buffer with new random data
         let buffer = self.buffer.get_mut();
-        let mut rng = thread_rng();
+        let mut rng = rng();
         rng.fill(buffer.as_mut_slice());
     }
 }
@@ -87,7 +87,7 @@ mod tests {
 
         // Create target with same size as source
         let mut target = MockTelemetry::create(source_size).unwrap();
-        
+
         // Test writing and reading data
         source.as_slice_mut()[0] = 42;
         target.as_slice_mut().copy_from_slice(source.as_slice());
@@ -102,11 +102,15 @@ mod tests {
     fn test_data_variation() {
         let mut source = MockTelemetry::open().unwrap();
         let initial_data = source.as_slice().to_vec();
-        
+
         // Get new data
         assert!(source.wait_for_data(20));
-        
+
         // Verify data changed
-        assert_ne!(source.as_slice(), &initial_data[..], "Data should change between updates");
+        assert_ne!(
+            source.as_slice(),
+            &initial_data[..],
+            "Data should change between updates"
+        );
     }
 }

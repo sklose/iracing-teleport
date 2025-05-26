@@ -11,7 +11,7 @@ edition = "2024"
 lz4 = "1.24.0"
 clap = { version = "4.5", features = ["derive"] }
 ctrlc = "3"
-rand = "0.8.5"
+rand = "0.9.1"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61.1", features = [
