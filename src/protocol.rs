@@ -1,7 +1,7 @@
 use std::io;
 
 // Maximum UDP multicast payload size (leaving some headroom for IP/UDP headers)
-pub const MAX_DATAGRAM_SIZE: usize = 60_000;
+pub const MAX_DATAGRAM_SIZE: usize = 9_000;
 
 // Maximum payload size per datagram (header + data)
 pub const MAX_PAYLOAD_SIZE: usize = MAX_DATAGRAM_SIZE - std::mem::size_of::<DatagramHeader>();
