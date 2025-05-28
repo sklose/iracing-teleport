@@ -77,8 +77,6 @@ pub fn run(bind: &str, unicast: bool, group: String, shutdown: Receiver<()>) -> 
             return Ok(());
         }
 
-        let current_time = Instant::now();
-
         match socket.recv_from(&mut rcv_buf) {
             Ok((amt, _)) => {
                 stats.add_protocol_bytes(amt);
@@ -87,7 +85,7 @@ pub fn run(bind: &str, unicast: bool, group: String, shutdown: Receiver<()>) -> 
                 let (data, sequence_changed) = protocol_receiver.process_datagram(&rcv_buf[..amt]);
 
                 if sequence_changed {
-                    sequence_start_time = Some(current_time);
+                    sequence_start_time = Some(Instant::now());
                 }
 
                 if let Some(data) = data {
@@ -106,16 +104,16 @@ pub fn run(bind: &str, unicast: bool, group: String, shutdown: Receiver<()>) -> 
                     // Track both data and protocol bytes for the complete message
                     stats.add_bytes(data.len());
 
+                    telemetry.signal_data_ready().map_err(|e| {
+                        io::Error::other(format!("Failed to signal data ready: {}", e))
+                    })?;
+
                     // Calculate total latency (source processing + target processing)
                     if let Some(start_time) = sequence_start_time.take() {
                         let source_time = protocol_receiver.last_source_time_us();
                         let target_time = start_time.elapsed().as_micros() as u64;
                         stats.add_latency(source_time + target_time);
                     }
-
-                    telemetry.signal_data_ready().map_err(|e| {
-                        io::Error::other(format!("Failed to signal data ready: {}", e))
-                    })?;
 
                     last_update = Instant::now();
                     stats.add_update();
