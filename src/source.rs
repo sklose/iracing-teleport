@@ -121,22 +121,27 @@ pub fn run(bind: &str, target: &str, unicast: bool, shutdown: Receiver<()>) -> i
 
         stats.add_bytes(len);
 
+        // Calculate processing time in microseconds
+        let processing_time = last_data_time.elapsed().as_micros() as u64;
+
         // Send the compressed data in fragments
         let send_result = if !unicast {
-            sender.send(&compression_buf[..len], |data| {
-                stats.add_protocol_bytes(data.len());
+            sender.send(&compression_buf[..len], processing_time, |data| {
                 socket.send_to(data, target).map(|_| ())
             })
         } else {
-            sender.send(&compression_buf[..len], |data| {
-                stats.add_protocol_bytes(data.len());
+            sender.send(&compression_buf[..len], processing_time, |data| {
                 socket.send(data).map(|_| ())
             })
         };
 
-        send_result?;
+        if let Ok(fragments) = send_result {
+            stats.add_fragments(fragments);
+        }
 
         stats.add_update();
+        stats.add_latency(processing_time);
+
         if stats.should_print() {
             stats.print_and_reset();
         }
