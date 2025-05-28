@@ -8,10 +8,10 @@ pub const MAX_PAYLOAD_SIZE: usize = MAX_DATAGRAM_SIZE - std::mem::size_of::<Data
 
 #[repr(C, packed)]
 struct DatagramHeader {
-    sequence: u32,     // Monotonically increasing sequence number
-    fragment: u16,     // Fragment index within this sequence
-    fragments: u16,    // Total number of fragments in this sequence
-    payload_size: u32, // Size of the compressed payload across all fragments
+    sequence: u32,       // Monotonically increasing sequence number
+    fragment: u16,       // Fragment index within this sequence
+    fragments: u16,      // Total number of fragments in this sequence
+    payload_size: u32,   // Size of the compressed payload across all fragments
     source_time_us: u64, // Source processing time in microseconds
 }
 
@@ -222,7 +222,10 @@ mod tests {
         // Receive the data
         let mut receiver = Receiver::new(MAX_DATAGRAM_SIZE);
         let (received, sequence_changed) = receiver.process_datagram(&sent_datagrams[0]);
-        assert!(sequence_changed, "First datagram should indicate sequence change");
+        assert!(
+            sequence_changed,
+            "First datagram should indicate sequence change"
+        );
         let received = received.unwrap();
 
         // Verify the received data matches the original
@@ -250,11 +253,22 @@ mod tests {
         let mut receiver = Receiver::new(data.len());
         for (i, datagram) in sent_datagrams.iter().take(3).enumerate() {
             let (received, sequence_changed) = receiver.process_datagram(datagram);
-            assert!(received.is_none(), "Fragment {} should not complete sequence", i);
-            assert_eq!(sequence_changed, i == 0, "Only first fragment should indicate sequence change");
+            assert!(
+                received.is_none(),
+                "Fragment {} should not complete sequence",
+                i
+            );
+            assert_eq!(
+                sequence_changed,
+                i == 0,
+                "Only first fragment should indicate sequence change"
+            );
         }
         let (received, sequence_changed) = receiver.process_datagram(&sent_datagrams[3]);
-        assert!(!sequence_changed, "Last fragment should not indicate sequence change");
+        assert!(
+            !sequence_changed,
+            "Last fragment should not indicate sequence change"
+        );
         let received = received.unwrap();
 
         // Verify the received data matches the original
@@ -279,14 +293,23 @@ mod tests {
         let mut receiver = Receiver::new(data.len());
         let (received, sequence_changed) = receiver.process_datagram(&sent_datagrams[2]);
         assert!(received.is_none());
-        assert!(!sequence_changed, "Last fragment should not indicate sequence change");
+        assert!(
+            !sequence_changed,
+            "Last fragment should not indicate sequence change"
+        );
 
         let (received, sequence_changed) = receiver.process_datagram(&sent_datagrams[0]);
         assert!(received.is_none());
-        assert!(sequence_changed, "First fragment should indicate sequence change");
+        assert!(
+            sequence_changed,
+            "First fragment should indicate sequence change"
+        );
 
         let (received, sequence_changed) = receiver.process_datagram(&sent_datagrams[1]);
-        assert!(!sequence_changed, "Middle fragment should not indicate sequence change");
+        assert!(
+            !sequence_changed,
+            "Middle fragment should not indicate sequence change"
+        );
         let received = received.unwrap();
 
         // Verify the received data matches the original
@@ -336,14 +359,23 @@ mod tests {
         let mut receiver = Receiver::new(data.len());
         let (received, sequence_changed) = receiver.process_datagram(&sent_datagrams[0]);
         assert!(received.is_none());
-        assert!(sequence_changed, "First fragment should indicate sequence change");
+        assert!(
+            sequence_changed,
+            "First fragment should indicate sequence change"
+        );
 
         let (received, sequence_changed) = receiver.process_datagram(&sent_datagrams[0]);
         assert!(received.is_none());
-        assert!(sequence_changed, "Duplicate fragment may indicate sequence change if we get the first fragment twice");
+        assert!(
+            sequence_changed,
+            "Duplicate fragment may indicate sequence change if we get the first fragment twice"
+        );
 
         let (received, sequence_changed) = receiver.process_datagram(&sent_datagrams[1]);
-        assert!(!sequence_changed, "Second fragment should not indicate sequence change");
+        assert!(
+            !sequence_changed,
+            "Second fragment should not indicate sequence change"
+        );
         let received = received.unwrap();
 
         // Verify the received data matches the original
@@ -373,6 +405,9 @@ mod tests {
         let mut receiver = Receiver::new(data.len());
         let (received, sequence_changed) = receiver.process_datagram(&corrupted);
         assert!(received.is_none());
-        assert!(!sequence_changed, "we can't make sense of a random fragment number showing up");
+        assert!(
+            !sequence_changed,
+            "we can't make sense of a random fragment number showing up"
+        );
     }
 }

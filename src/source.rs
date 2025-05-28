@@ -6,9 +6,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::protocol::{Sender};
+use crate::protocol::Sender;
 use crate::stats::StatisticsPrinter;
-use crate::telemetry::{MAX_TELEMETRY_SIZE,Telemetry, TelemetryError, TelemetryProvider};
+use crate::telemetry::{MAX_TELEMETRY_SIZE, Telemetry, TelemetryError, TelemetryProvider};
 
 // Timeout before considering the connection lost
 const DISCONNECT_TIMEOUT: Duration = Duration::from_secs(10);

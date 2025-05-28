@@ -85,7 +85,7 @@ pub fn run(bind: &str, unicast: bool, group: String, shutdown: Receiver<()>) -> 
 
                 // Process the received datagram
                 let (data, sequence_changed) = protocol_receiver.process_datagram(&rcv_buf[..amt]);
-                
+
                 if sequence_changed {
                     sequence_start_time = Some(current_time);
                 }
