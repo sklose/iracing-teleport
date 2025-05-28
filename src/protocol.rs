@@ -28,7 +28,7 @@ impl Sender {
         }
     }
 
-    pub fn send<F>(&mut self, data: &[u8], source_time_us: u64, mut send_fn: F) -> io::Result<()>
+    pub fn send<F>(&mut self, data: &[u8], source_time_us: u64, mut send_fn: F) -> io::Result<u16>
     where
         F: FnMut(&[u8]) -> io::Result<()>,
     {
@@ -81,7 +81,7 @@ impl Sender {
 
         // Increment sequence number
         self.sequence = self.sequence.wrapping_add(1);
-        Ok(())
+        Ok(fragments as u16)
     }
 }
 
@@ -110,6 +110,10 @@ impl Receiver {
 
     pub fn last_source_time_us(&self) -> u64 {
         self.last_source_time_us
+    }
+
+    pub fn total_fragments(&self) -> u16 {
+        self.total_fragments
     }
 
     pub fn process_datagram(&mut self, data: &[u8]) -> (Option<&[u8]>, bool) {

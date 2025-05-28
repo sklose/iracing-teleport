@@ -127,17 +127,17 @@ pub fn run(bind: &str, target: &str, unicast: bool, shutdown: Receiver<()>) -> i
         // Send the compressed data in fragments
         let send_result = if !unicast {
             sender.send(&compression_buf[..len], processing_time, |data| {
-                stats.add_protocol_bytes(data.len());
                 socket.send_to(data, target).map(|_| ())
             })
         } else {
             sender.send(&compression_buf[..len], processing_time, |data| {
-                stats.add_protocol_bytes(data.len());
                 socket.send(data).map(|_| ())
             })
         };
 
-        send_result?;
+        if let Ok(fragments) = send_result {
+            stats.add_fragments(fragments);
+        }
 
         stats.add_update();
         stats.add_latency(processing_time);

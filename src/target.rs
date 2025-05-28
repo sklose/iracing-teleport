@@ -79,8 +79,6 @@ pub fn run(bind: &str, unicast: bool, group: String, shutdown: Receiver<()>) -> 
 
         match socket.recv_from(&mut rcv_buf) {
             Ok((amt, _)) => {
-                stats.add_protocol_bytes(amt);
-
                 // Process the received datagram
                 let (data, sequence_changed) = protocol_receiver.process_datagram(&rcv_buf[..amt]);
 
@@ -101,8 +99,9 @@ pub fn run(bind: &str, unicast: bool, group: String, shutdown: Receiver<()>) -> 
                         continue;
                     }
 
-                    // Track both data and protocol bytes for the complete message
+                    // Track total bytes and fragments for the complete message
                     stats.add_bytes(data.len());
+                    stats.add_fragments(protocol_receiver.total_fragments());
 
                     telemetry.signal_data_ready().map_err(|e| {
                         io::Error::other(format!("Failed to signal data ready: {}", e))
