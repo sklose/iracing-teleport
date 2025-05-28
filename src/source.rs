@@ -76,8 +76,6 @@ pub fn run(bind: &str, target: &str, unicast: bool, shutdown: Receiver<()>) -> i
             return Ok(());
         }
 
-        let start_time = Instant::now();
-
         if !telemetry.wait_for_data(WAIT_INTERVAL_MS) {
             // Check if we've been waiting too long
             if last_data_time.elapsed() >= DISCONNECT_TIMEOUT {
@@ -124,7 +122,7 @@ pub fn run(bind: &str, target: &str, unicast: bool, shutdown: Receiver<()>) -> i
         stats.add_bytes(len);
 
         // Calculate processing time in microseconds
-        let processing_time = start_time.elapsed().as_micros() as u64;
+        let processing_time = last_data_time.elapsed().as_micros() as u64;
 
         // Send the compressed data in fragments
         let send_result = if !unicast {
