@@ -140,6 +140,8 @@ pub fn run(bind: &str, target: &str, unicast: bool, shutdown: Receiver<()>) -> i
         send_result?;
 
         stats.add_update();
+        stats.add_latency(processing_time);
+
         if stats.should_print() {
             stats.print_and_reset();
         }
