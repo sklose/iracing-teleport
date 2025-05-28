@@ -17,6 +17,7 @@ The tool consists of two components:
 Features:
 - LZ4 compression to reduce network usage
 - Support for both unicast and multicast (default) communication
+- Low latency - less than 1ms in added latency over ethernet
 
 ## Usage Examples
 
