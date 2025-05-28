@@ -6,9 +6,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::protocol::Sender;
+use crate::protocol::{Sender};
 use crate::stats::StatisticsPrinter;
-use crate::telemetry::{MAX_TELEMETRY_SIZE, Telemetry, TelemetryError, TelemetryProvider};
+use crate::telemetry::{MAX_TELEMETRY_SIZE,Telemetry, TelemetryError, TelemetryProvider};
 
 // Timeout before considering the connection lost
 const DISCONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -76,6 +76,8 @@ pub fn run(bind: &str, target: &str, unicast: bool, shutdown: Receiver<()>) -> i
             return Ok(());
         }
 
+        let start_time = Instant::now();
+
         if !telemetry.wait_for_data(WAIT_INTERVAL_MS) {
             // Check if we've been waiting too long
             if last_data_time.elapsed() >= DISCONNECT_TIMEOUT {
@@ -121,14 +123,17 @@ pub fn run(bind: &str, target: &str, unicast: bool, shutdown: Receiver<()>) -> i
 
         stats.add_bytes(len);
 
+        // Calculate processing time in microseconds
+        let processing_time = start_time.elapsed().as_micros() as u64;
+
         // Send the compressed data in fragments
         let send_result = if !unicast {
-            sender.send(&compression_buf[..len], |data| {
+            sender.send(&compression_buf[..len], processing_time, |data| {
                 stats.add_protocol_bytes(data.len());
                 socket.send_to(data, target).map(|_| ())
             })
         } else {
-            sender.send(&compression_buf[..len], |data| {
+            sender.send(&compression_buf[..len], processing_time, |data| {
                 stats.add_protocol_bytes(data.len());
                 socket.send(data).map(|_| ())
             })

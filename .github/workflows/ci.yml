@@ -41,6 +41,13 @@ jobs:
       - name: Run tests
         run: cargo test --release
 
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: iracing-teleport
+          path: target/x86_64-pc-windows-gnu/release/iracing-teleport.exe
+          retention-days: 7
+
   release:
     name: Build Release Asset
     runs-on: ubuntu-latest

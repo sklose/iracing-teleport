@@ -64,6 +64,7 @@ pub fn run(bind: &str, unicast: bool, group: String, shutdown: Receiver<()>) -> 
     let mut telemetry: Option<Telemetry> = None;
     let mut last_update = Instant::now();
     let mut stats = StatisticsPrinter::new("target");
+    let mut sequence_start_time: Option<Instant> = None;
 
     // Set a short timeout on UDP receive to check for telemetry timeout
     socket
@@ -76,12 +77,20 @@ pub fn run(bind: &str, unicast: bool, group: String, shutdown: Receiver<()>) -> 
             return Ok(());
         }
 
+        let current_time = Instant::now();
+
         match socket.recv_from(&mut rcv_buf) {
             Ok((amt, _)) => {
                 stats.add_protocol_bytes(amt);
 
                 // Process the received datagram
-                if let Some(data) = protocol_receiver.process_datagram(&rcv_buf[..amt]) {
+                let (data, sequence_changed) = protocol_receiver.process_datagram(&rcv_buf[..amt]);
+                
+                if sequence_changed {
+                    sequence_start_time = Some(current_time);
+                }
+
+                if let Some(data) = data {
                     // Create telemetry if it doesn't exist
                     if telemetry.is_none() {
                         telemetry = Some(create_telemetry()?);
@@ -96,6 +105,13 @@ pub fn run(bind: &str, unicast: bool, group: String, shutdown: Receiver<()>) -> 
 
                     // Track both data and protocol bytes for the complete message
                     stats.add_bytes(data.len());
+
+                    // Calculate total latency (source processing + target processing)
+                    if let Some(start_time) = sequence_start_time.take() {
+                        let source_time = protocol_receiver.last_source_time_us();
+                        let target_time = start_time.elapsed().as_micros() as u64;
+                        stats.add_latency(source_time + target_time);
+                    }
 
                     telemetry.signal_data_ready().map_err(|e| {
                         io::Error::other(format!("Failed to signal data ready: {}", e))
@@ -118,7 +134,7 @@ pub fn run(bind: &str, unicast: bool, group: String, shutdown: Receiver<()>) -> 
                         "No updates received for {} seconds, closing telemetry",
                         TELEMETRY_TIMEOUT.as_secs()
                     );
-                    telemetry = None; // Reset accumulated bytes on timeout
+                    telemetry = None;
                 }
             }
             Err(e) => {
